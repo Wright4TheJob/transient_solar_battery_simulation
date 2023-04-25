@@ -1,33 +1,27 @@
 use transient_solar_battery_simulation::*;
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, NaiveDate};
 
 fn main() {
     // Create state
     let mut state = State::new();
-    state.solar_nominal_output = 20.;
-    state.battery_capacity = 150.;
+    state.solar_nominal_output = 25.;
+    state.latitude = 20.;
+    state.battery_capacity = 2000.;
+    state.current_stored_energy = 1500.;
     state.loads.push(10.);
-    println!("{:?}", state);
 
-    let mut dates = Vec::new();
     let mut durations = Vec::new();
 
     // Iterate
-    let mut t = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
-        .and_hms_opt(0, 0, 0).unwrap();
-    let end = NaiveDate::from_ymd_opt(2023, 2, 1).unwrap()
+    let end = NaiveDate::from_ymd_opt(2023, 5, 1).unwrap()
         .and_hms_opt(0, 0, 0).unwrap();
 
-    while t < end {
+    while state.now < end {
         state = step(&state);
-
-        dates.push(t.clone());
-
-        t += Duration::hours(1);
-        durations.push(daylight_hours(36., t.ordinal0()));
+        durations.push(daylight_hours(state.latitude, state.now.ordinal0()));
     }
     chart(
-        dates, 
+        state.history_dates, 
         vec![state.charge_history], 
     vec![durations],
         vec!["State of Charge".to_string(), "Daylight Hours".to_string()], 

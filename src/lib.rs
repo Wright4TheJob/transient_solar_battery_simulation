@@ -12,7 +12,6 @@ pub struct State {
     pub solar_nominal_output: f32, // watts
     pub charge_history: Vec<f32>, // Wh
     pub latitude: f32,
-    pub ordinal_day: u32,
     pub history_dates: Vec<NaiveDateTime>,
     pub now: NaiveDateTime, 
     pub step_size: Duration
@@ -26,7 +25,6 @@ impl State {
             solar_nominal_output: 0.,
             charge_history: Vec::new(),
             latitude: 0.,
-            ordinal_day: 0,
             history_dates: Vec::new(),
             now:  NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(0,0,0).unwrap()),
             step_size: Duration::hours(1)
@@ -34,63 +32,31 @@ impl State {
     }
 }
 
-pub fn net_energy(state: &State) -> f32 {
-    let net_power = state.solar_nominal_output - total_load(&state);
-    net_power*bounded_daylight_hours(state.now, state.now + state.step_size, daylight_hours(state.latitude, state.ordinal_day))
-}
-
-#[test]
-fn test_net() {
-    let mut state = State::new();
-    state.battery_capacity = 100.;
-    state.current_stored_energy = 50.;
-    state.solar_nominal_output = 100.;
-    state.loads = vec![10.,10.,30.];
-    let net = net_energy(&state);
-    assert_eq!(net, 100.)
-}
-
-#[test]
-fn test_net_2() {
-    let mut state = State::new();
-    state.battery_capacity = 100.;
-    state.current_stored_energy = 50.;
-    state.solar_nominal_output = 50.;
-    state.loads = vec![10.];
-    let net = net_energy(&state);
-    assert_eq!(net, 80.)
-}
-
-pub fn total_load(state: &State) -> f32 {
-    state.loads.iter().sum()
-}
-#[test]
-fn test_total_loads() {
-    let mut state = State::new();
-    state.loads = vec![10.,10.,30.];
-    let total = total_load(&state);
-    assert_eq!(total, 50.)
-}
-
 
 pub fn step(state: &State) -> State {
     let delta = net_energy(&state);
-    let effective_delta = if delta < -state.current_stored_energy {
-        -state.current_stored_energy
-    } else if delta + state.current_stored_energy > state.battery_capacity {
-        state.battery_capacity - state.current_stored_energy
-    } else {
-        delta
-    };
+
+    let unbounded_charge = state.current_stored_energy + delta;
+
     let mut new_state = state.clone();
-    new_state.charge_history.push(state.current_stored_energy + effective_delta);
-    new_state.current_stored_energy += effective_delta;
+    new_state.charge_history.push(state.current_stored_energy);
+    new_state.current_stored_energy = if unbounded_charge < 0. {
+        0.
+    } else if unbounded_charge > state.battery_capacity {
+        state.battery_capacity
+    } else {
+        state.current_stored_energy + delta
+    };
+    new_state.now = state.now + state.step_size;
+    new_state.history_dates.push(state.now);
     new_state
 }
 
 #[test]
 fn test_step_1() {
     let mut state = State::new();
+    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
+    state.step_size = Duration::hours(2);
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 0.;
@@ -113,13 +79,61 @@ fn test_step_2() {
 #[test]
 fn test_step_3() {
     let mut state = State::new();
+    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
+
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 50.;
     state.loads = vec![10.];
     let net = step(&state);
-    assert_eq!(net.current_stored_energy, 100.)
+    assert_eq!(net.current_stored_energy, 90.)
 }
+
+pub fn net_energy(state: &State) -> f32 {
+    let actual_solar_energy = state.solar_nominal_output * bounded_daylight_hours(
+        state.now, 
+        state.now + state.step_size, 
+        daylight_hours(state.latitude, state.now.ordinal0()));
+    let load_energy = total_load(state) * state.step_size.num_minutes() as f32 / 60.;
+    actual_solar_energy - load_energy
+}
+
+#[test]
+fn test_net() {
+    let mut state = State::new();
+    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
+    state.battery_capacity = 100.;
+    state.current_stored_energy = 50.;
+    state.solar_nominal_output = 80.;
+    state.loads = vec![10.,10.,30.];
+    let net = net_energy(&state);
+    assert_eq!(net, 30.)
+}
+
+#[test]
+fn test_net_2() {
+    let mut state = State::new();
+    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
+    state.battery_capacity = 100.;
+    state.current_stored_energy = 50.;
+    state.solar_nominal_output = 50.;
+    state.loads = vec![10.];
+    let net = net_energy(&state);
+    assert_eq!(net, 40.)
+}
+
+pub fn total_load(state: &State) -> f32 {
+    state.loads.iter().sum()
+}
+#[test]
+fn test_total_loads() {
+    let mut state = State::new();
+    state.loads = vec![10.,10.,30.];
+    let total = total_load(&state);
+    assert_eq!(total, 50.)
+}
+
+
 
 pub fn daylight_hours(lat: f32, day: u32) -> f32{
 
@@ -148,25 +162,80 @@ fn test_daylight_1() {
 }
 
 pub fn bounded_daylight_duration(start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> Duration {
-    let sunrise = start.clone();
-    sunrise.with_hour((12. - daylight_hours/2.) as u32);
-    let sunset = start.clone();
-    sunset.with_hour((12. - daylight_hours/2.) as u32);
+    let sunrise = start.clone().with_hour((12. - daylight_hours/2.) as u32).unwrap();
+    let sunset = start.clone().with_hour((12. + daylight_hours/2.) as u32).unwrap();
 
-    if start < sunrise && end > sunrise && end < sunset {
-        end - sunrise
-    } else if start > sunrise && end < sunset{
-        sunset - sunrise
-    } else if start > sunrise && start < sunset && end > sunset {
-        sunset - start
-    } else {
+    if end < sunrise || start > sunset {
         Duration::zero()
+    } else {
+        earlier_of(end, sunset) - later_of(start, sunrise)
     }
+}
+
+#[test]
+fn test_bounded_daylight_duration_1() {
+    let start =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    let end =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(13,0,0).unwrap());
+    assert_eq!(bounded_daylight_duration(start, end, 12.), Duration::hours(1))
 }
 
 pub fn bounded_daylight_hours(start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> f32 {
     let dur = bounded_daylight_duration(start, end, daylight_hours);
-    dur.num_hours() as f32 + dur.num_hours() as f32 / 60.
+    dur.num_seconds() as f32 / (60.*60.)
+}
+
+#[test]
+fn test_bounded_daylight_hours_1() {
+    let start =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    let end =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(13,0,0).unwrap());
+    assert_eq!(bounded_daylight_hours(start, end, 12.), 1.)
+}
+
+#[test]
+fn test_bounded_daylight_hours_2() {
+    let start =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    let dur =  Duration::hours(1);
+    assert_eq!(bounded_daylight_hours(start, start + dur, 12.), 1.)
+}
+
+pub fn later_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+#[test]
+fn test_time_comparison() {
+    let noon =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    let nine_am =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    assert_eq!(later_of(noon, nine_am), noon);
+    assert_eq!(later_of(nine_am, noon), noon);
+    assert_eq!(earlier_of(noon, nine_am), nine_am);
+    assert_eq!(earlier_of(nine_am, noon), nine_am);
+}
+
+pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
+    if a < b {
+        a
+    } else {
+        b
+    }
 }
 
 pub fn solar_power(nominal_power: f32, start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> f32 {

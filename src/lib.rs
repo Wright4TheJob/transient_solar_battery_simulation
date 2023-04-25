@@ -1,12 +1,16 @@
-use chrono::{Datelike, DateTime, Duration, Utc, NaiveDate, Weekday};
+use std::f32::consts::PI;
+use plotters::prelude::*;
+use plotters::coord::types::RangedDateTime;
+
+use chrono::{Datelike, Timelike, DateTime, Duration, NaiveDateTime};
 
 #[derive (Debug, Clone, Default)]
 pub struct State {
-    loads: Vec<f32>, // watts
-    battery_capacity: f32, // Wh
-    current_stored_energy: f32, // Wh
-    solar_nominal_output: f32, // watts
-    charge_history: Vec<f32> // Wh
+    pub loads: Vec<f32>, // watts
+    pub battery_capacity: f32, // Wh
+    pub current_stored_energy: f32, // Wh
+    pub solar_nominal_output: f32, // watts
+    pub charge_history: Vec<f32> // Wh
 }
 
 pub fn net_energy(duration: Duration, state: &State) -> f32 {
@@ -101,11 +105,175 @@ fn test_step_3() {
     assert_eq!(net.current_stored_energy, 100.)
 }
 
-pub fn daylight_hours() {
-//     P = asin[.39795*cos(.2163108 + 2*atan{.9671396*tan[.00860(J-186)]})]
+pub fn daylight_hours(lat: f32, day: u32) -> f32{
+
+    let p = (0.39795*
+        (0.2163108 + 2.*
+            (0.9671396*
+                (0.00860*(day as f32)).tan()
+            ).atan()
+        ).cos()
+    ).asin();
 
 //                           _                                         _
 //                          / sin(0.8333*pi/180) + sin(L*pi/180)*sin(P) \
 //    D = 24 - (24/pi)*acos{  -----------------------------------------  }
 //                          \_          cos(L*pi/180)*cos(P)           _/
+    let numerator = (0.8333*PI / 180.).sin() + (lat*PI/180.).sin()*p.sin();
+    let denom = (lat*PI/180.).cos()*p.cos();
+    let d = (24./PI)*(numerator/denom).acos();
+    d
+}
+
+#[test]
+fn test_daylight_1() {
+    let error = (daylight_hours(0., 85) - 12.).abs();
+    assert!(error < 0.15)
+}
+
+pub fn chart(
+    xs: Vec<NaiveDateTime>, 
+    ys: Vec<Vec<f32>>, 
+    ys_secondary: Vec<Vec<f32>>,
+    labels: Vec<String>, 
+    title: Option<String>, 
+    show_legend: bool) {
+
+    let output_file = "Energy Plot.png";
+
+    let root = BitMapBackend::new(output_file, (1024, 768)).into_drawing_area();
+    let mut builder = ChartBuilder::on(&root);
+    //use plotters::{prelude::*, style::Color};
+    root.fill(&WHITE).unwrap();
+
+    //const PLOT_LINE_COLOR: RGBColor = RGBColor(0, 175, 255);
+    
+    let from_date = *xs.first().clone().expect("No dates to display");
+    let to_date = *xs.last().expect("No dates to display");
+
+    let y_max: f32 = ys.iter().map(|y| 
+        y.clone().into_iter().reduce(f32::max))
+        .filter(|i| i.is_some())
+        .map(|i| i.unwrap()).reduce(f32::max).unwrap();
+    
+    let y_secondary_max: f32 = ys_secondary.iter().map(|y| 
+        y.clone().into_iter().reduce(f32::max))
+        .filter(|i| i.is_some())
+        .map(|i| i.unwrap()).reduce(f32::max).unwrap();
+
+    let mut chart = if title.is_some(){
+        builder
+        .x_label_area_size(28_i32)
+        .y_label_area_size(28_i32)
+        .right_y_label_area_size(40)
+        .margin(20_i32)
+        .caption(title.clone().unwrap().as_str(), ("sans-serif", 30.0))
+        .build_cartesian_2d(
+            RangedDateTime::from(from_date..to_date), 
+            0_f32..y_max*1.05).unwrap()
+        .set_secondary_coord(
+            RangedDateTime::from(from_date..to_date), 
+            0_f32..y_secondary_max*1.05)
+    } else {
+        builder
+            .x_label_area_size(28_i32)
+            .y_label_area_size(28_i32)
+            .right_y_label_area_size(40)
+            .margin(20_i32)
+            .build_cartesian_2d(
+                RangedDateTime::from(from_date..to_date), 
+                0_f32..y_max*1.05).unwrap()
+            .set_secondary_coord(
+                RangedDateTime::from(from_date..to_date), 
+                0_f32..y_secondary_max*1.05)
+            // .expect("Failed to build chart")
+    };
+
+    chart
+        .configure_mesh()
+        //.bold_line_style(plotters::style::colors::BLUE.mix(0.1))
+        //.light_line_style(plotters::style::colors::BLUE.mix(0.05))
+        //.axis_style(ShapeStyle::from(plotters::style::colors::BLUE.mix(0.45)).stroke_width(1))
+        //.y_labels(10)
+        .x_labels(6)
+        .x_label_formatter(&|x| format!("{}-{}-{}", x.day(), x.month(), x.year()))
+        //.y_label_style(
+        //    ("sans-serif", 15)
+        //        .into_font()
+        //        .color(&plotters::style::colors::BLUE.mix(0.65))
+        //        .transform(FontTransform::Rotate90),
+        //)
+        .y_label_formatter(&|y| format!("{}", y))
+        .draw()
+        .expect("failed to draw chart mesh");
+
+    chart
+        .configure_secondary_axes()
+        .y_desc("Daylight Hours")
+        .draw().unwrap();
+
+    let colors = vec![
+        &BLUE, 
+        &RED, 
+        &BLACK, 
+        &RGBColor(0, 128, 0), // green 
+        &RGBColor(255, 146, 0), // Orange/brown 
+        &RGBColor(0, 153, 230), // light blue
+        &RGBColor(180, 0, 180), // Purple
+        &RGBColor(255, 150, 150), // pink
+    ];
+    let mut color_index = 0;
+    let n = vec![ys.len(), colors.len(), labels.len()].iter().min().unwrap_or(&1).clone() as usize;
+
+    for i in 0..n {
+        let this_data: Vec<(NaiveDateTime,f32)> = xs.clone().into_iter()
+            .zip(ys[i.clone()].clone().into_iter()).collect();
+        let this_color = colors[color_index];
+        let this_label = labels[i].clone();
+        chart
+        .draw_series(
+            LineSeries::new(
+                this_data.iter().cloned(),
+                this_color,
+                //PLOT_LINE_COLOR.mix(0.175),
+            )
+            //.border_style(ShapeStyle::from(**color).stroke_width(2)),
+        )
+        .expect("failed to draw chart data")
+        .label(this_label)
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], this_color.clone()));
+        color_index += 1;
+    }
+
+
+    let n = vec![ys_secondary.len(), colors.len(), labels.len()].iter().min().unwrap_or(&1).clone() as usize;
+
+    for i in 0..n {
+        let this_data: Vec<(NaiveDateTime,f32)> = xs.clone().into_iter()
+            .zip(ys_secondary[i.clone()].clone().into_iter()).collect();
+        let this_color = colors[color_index];
+        let this_label = labels[color_index].clone();
+        chart
+        .draw_secondary_series(
+            LineSeries::new(
+                this_data.iter().cloned(),
+                this_color,
+                //PLOT_LINE_COLOR.mix(0.175),
+            )
+            //.border_style(ShapeStyle::from(**color).stroke_width(2)),
+        )
+        .expect("failed to draw chart data")
+        .label(this_label)
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], this_color.clone()));
+        color_index += 1;
+    }
+
+    if show_legend {
+        chart.configure_series_labels()
+        .background_style(&WHITE)
+        .border_style(&BLACK)
+        .draw().expect("Failed to draw legend")    
+    }
+    root.present().expect("Unable to write result to file, please make sure 'plotters-doc-data' dir exists under current dir");
+    println!("Result has been saved to {}", output_file);
 }

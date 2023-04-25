@@ -2,43 +2,62 @@ use std::f32::consts::PI;
 use plotters::prelude::*;
 use plotters::coord::types::RangedDateTime;
 
-use chrono::{Datelike, Timelike, DateTime, Duration, NaiveDateTime};
+use chrono::{Datelike, Timelike, Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
-#[derive (Debug, Clone, Default)]
+#[derive (Debug, Clone)]
 pub struct State {
     pub loads: Vec<f32>, // watts
     pub battery_capacity: f32, // Wh
     pub current_stored_energy: f32, // Wh
     pub solar_nominal_output: f32, // watts
-    pub charge_history: Vec<f32> // Wh
+    pub charge_history: Vec<f32>, // Wh
+    pub latitude: f32,
+    pub ordinal_day: u32,
+    pub history_dates: Vec<NaiveDateTime>,
+    pub now: NaiveDateTime, 
+    pub step_size: Duration
+}
+impl State {
+    pub fn new() -> State {
+        State {
+            loads: Vec::new(),
+            battery_capacity: 0.,
+            current_stored_energy: 0.,
+            solar_nominal_output: 0.,
+            charge_history: Vec::new(),
+            latitude: 0.,
+            ordinal_day: 0,
+            history_dates: Vec::new(),
+            now:  NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(0,0,0).unwrap()),
+            step_size: Duration::hours(1)
+        }
+    }
 }
 
-pub fn net_energy(duration: Duration, state: &State) -> f32 {
+pub fn net_energy(state: &State) -> f32 {
     let net_power = state.solar_nominal_output - total_load(&state);
-    net_power*duration.num_hours() as f32
+    net_power*bounded_daylight_hours(state.now, state.now + state.step_size, daylight_hours(state.latitude, state.ordinal_day))
 }
 
 #[test]
 fn test_net() {
-    let duration = Duration::hours(2);
-    let mut state = State::default();
+    let mut state = State::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 100.;
     state.loads = vec![10.,10.,30.];
-    let net = net_energy(duration, &state);
+    let net = net_energy(&state);
     assert_eq!(net, 100.)
 }
 
 #[test]
 fn test_net_2() {
-    let duration = Duration::hours(2);
-    let mut state = State::default();
+    let mut state = State::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 50.;
     state.loads = vec![10.];
-    let net = net_energy(duration, &state);
+    let net = net_energy(&state);
     assert_eq!(net, 80.)
 }
 
@@ -47,15 +66,15 @@ pub fn total_load(state: &State) -> f32 {
 }
 #[test]
 fn test_total_loads() {
-    let mut state = State::default();
+    let mut state = State::new();
     state.loads = vec![10.,10.,30.];
     let total = total_load(&state);
     assert_eq!(total, 50.)
 }
 
 
-pub fn step(duration: Duration, state: &State) -> State {
-    let delta = net_energy(duration, &state);
+pub fn step(state: &State) -> State {
+    let delta = net_energy(&state);
     let effective_delta = if delta < -state.current_stored_energy {
         -state.current_stored_energy
     } else if delta + state.current_stored_energy > state.battery_capacity {
@@ -71,37 +90,34 @@ pub fn step(duration: Duration, state: &State) -> State {
 
 #[test]
 fn test_step_1() {
-    let duration = Duration::hours(2);
-    let mut state = State::default();
+    let mut state = State::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 0.;
     state.loads = vec![10.,10.];
-    let net = step(duration, &state);
+    let net = step(&state);
     assert_eq!(net.current_stored_energy, 10.)
 }
 
 #[test]
 fn test_step_2() {
-    let duration = Duration::hours(2);
-    let mut state = State::default();
+    let mut state = State::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 10.;
     state.loads = vec![10.,10.];
-    let net = step(duration, &state);
+    let net = step(&state);
     assert_eq!(net.current_stored_energy, 30.)
 }
 
 #[test]
 fn test_step_3() {
-    let duration = Duration::hours(2);
-    let mut state = State::default();
+    let mut state = State::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 50.;
     state.loads = vec![10.];
-    let net = step(duration, &state);
+    let net = step(&state);
     assert_eq!(net.current_stored_energy, 100.)
 }
 
@@ -129,6 +145,32 @@ pub fn daylight_hours(lat: f32, day: u32) -> f32{
 fn test_daylight_1() {
     let error = (daylight_hours(0., 85) - 12.).abs();
     assert!(error < 0.15)
+}
+
+pub fn bounded_daylight_duration(start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> Duration {
+    let sunrise = start.clone();
+    sunrise.with_hour((12. - daylight_hours/2.) as u32);
+    let sunset = start.clone();
+    sunset.with_hour((12. - daylight_hours/2.) as u32);
+
+    if start < sunrise && end > sunrise && end < sunset {
+        end - sunrise
+    } else if start > sunrise && end < sunset{
+        sunset - sunrise
+    } else if start > sunrise && start < sunset && end > sunset {
+        sunset - start
+    } else {
+        Duration::zero()
+    }
+}
+
+pub fn bounded_daylight_hours(start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> f32 {
+    let dur = bounded_daylight_duration(start, end, daylight_hours);
+    dur.num_hours() as f32 + dur.num_hours() as f32 / 60.
+}
+
+pub fn solar_power(nominal_power: f32, start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> f32 {
+    nominal_power
 }
 
 pub fn chart(

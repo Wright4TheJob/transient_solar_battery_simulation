@@ -1,9 +1,9 @@
 use transient_solar_battery_simulation::*;
-use chrono::{Datelike, DateTime, Duration, NaiveDate, NaiveDateTime};
+use chrono::{Datelike, Duration, NaiveDate};
 
 fn main() {
     // Create state
-    let mut state = State::default();
+    let mut state = State::new();
     state.solar_nominal_output = 20.;
     state.battery_capacity = 150.;
     state.loads.push(10.);
@@ -19,7 +19,7 @@ fn main() {
         .and_hms_opt(0, 0, 0).unwrap();
 
     while t < end {
-        state = step(Duration::hours(1), &state);
+        state = step(&state);
 
         dates.push(t.clone());
 

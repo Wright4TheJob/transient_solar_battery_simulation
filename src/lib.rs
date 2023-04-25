@@ -90,7 +90,7 @@ fn test_step_3() {
 }
 
 pub fn net_energy(state: &State) -> f32 {
-    let actual_solar_energy = state.solar_nominal_output * bounded_daylight_hours(
+    let actual_solar_energy = solar_power(state.solar_nominal_output, state) * bounded_daylight_hours(
         state.now, 
         state.now + state.step_size, 
         daylight_hours(state.latitude, state.now.ordinal0()));
@@ -162,9 +162,12 @@ fn test_daylight_1() {
 }
 
 pub fn bounded_daylight_duration(start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> Duration {
-    let sunrise = start.clone().with_hour((12. - daylight_hours/2.) as u32).unwrap();
-    let sunset = start.clone().with_hour((12. + daylight_hours/2.) as u32).unwrap();
-
+    let sunrise = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
+        NaiveTime::from_num_seconds_from_midnight_opt(((12. - daylight_hours / 2.)*60.*60.) as u32, 0).unwrap());
+    let sunset = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
+        NaiveTime::from_num_seconds_from_midnight_opt(((12. + daylight_hours / 2.)*60.*60.) as u32, 0).unwrap());
     if end < sunrise || start > sunset {
         Duration::zero()
     } else {
@@ -208,6 +211,17 @@ fn test_bounded_daylight_hours_2() {
     assert_eq!(bounded_daylight_hours(start, start + dur, 12.), 1.)
 }
 
+#[test]
+fn test_bounded_daylight_hours_3() {
+    let start =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(5,15,0).unwrap());
+    let end =  NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(6,15,0).unwrap());
+    assert_eq!(bounded_daylight_hours(start, end, 12.), 0.25)
+}
+
 pub fn later_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
     if a > b {
         a
@@ -238,8 +252,41 @@ pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
     }
 }
 
-pub fn solar_power(nominal_power: f32, start: NaiveDateTime, end: NaiveDateTime, daylight_hours: f32) -> f32 {
-    nominal_power
+pub fn solar_power(nominal_power: f32, state: &State) -> f32 {
+    let start = state.now;
+    let end = state.now + state.step_size;
+    let light_hours = daylight_hours(state.latitude, state.now.ordinal0());
+    let sunrise = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
+        NaiveTime::from_num_seconds_from_midnight_opt(((12. - light_hours / 2.)*60.*60.) as u32, 0).unwrap());
+    let sunset = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
+        NaiveTime::from_num_seconds_from_midnight_opt(((12. + light_hours / 2.)*60.*60.) as u32, 0).unwrap());
+    if end < sunrise || start > sunset {
+        0.
+    } else {
+        let start_coeff = solar_production_curve(later_of(start, sunrise).time(), light_hours);
+        let end_coeff = solar_production_curve(earlier_of(end, sunset).time(), light_hours);
+        let avg_coeff = (start_coeff + end_coeff)/2.;
+        nominal_power * avg_coeff
+    }
+}
+
+pub fn solar_production_curve(time: NaiveTime, light_hours: f32) -> f32 {
+    let time_scaler = 2.*PI/light_hours;
+    let hour = time.hour() as f32 + (time.minute() as f32)/60. + (time.second() as f32)/(60.*60.);
+    0.5*(time_scaler*(hour+12.)).cos()+0.5
+}
+
+#[test]
+fn test_solar_production_1() {
+    let noon =  NaiveTime::from_hms_opt(12,0,0).unwrap();
+    assert_eq!(solar_production_curve(noon, 12.), 1.);
+}
+#[test]
+fn test_solar_production_2() {
+    let six =  NaiveTime::from_hms_opt(6,0,0).unwrap();
+    assert_eq!(solar_production_curve(six, 12.), 0.);
 }
 
 pub fn chart(

@@ -4,16 +4,16 @@ use chrono::{Datelike, NaiveDate};
 fn main() {
     // Create state
     let mut state = State::new();
-    state.solar_nominal_output = 25.;
+    state.solar_nominal_output = 43.;
     state.latitude = 20.;
-    state.battery_capacity = 2000.;
-    state.current_stored_energy = 1500.;
+    state.battery_capacity = 300.;
+    state.current_stored_energy = 150.;
     state.loads.push(10.);
 
     let mut durations = Vec::new();
 
     // Iterate
-    let end = NaiveDate::from_ymd_opt(2023, 5, 1).unwrap()
+    let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
         .and_hms_opt(0, 0, 0).unwrap();
 
     while state.now < end {

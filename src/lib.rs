@@ -1,12 +1,13 @@
+pub mod gui;
+
 use std::f32::consts::PI;
 use plotters::prelude::*;
 use plotters::coord::types::RangedDateTime;
-
 use chrono::{Datelike, Timelike, Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
 #[derive (Debug, Clone)]
-pub struct State {
-    pub loads: Vec<f32>, // watts
+pub struct SimState {
+    pub load: f32, // watts
     pub battery_capacity: f32, // Wh
     pub current_stored_energy: f32, // Wh
     pub solar_nominal_output: f32, // watts
@@ -14,12 +15,14 @@ pub struct State {
     pub latitude: f32,
     pub history_dates: Vec<NaiveDateTime>,
     pub now: NaiveDateTime, 
-    pub step_size: Duration
+    pub step_size: Duration,
+    pub start_day: u32,
+    pub end_day: u32
 }
-impl State {
-    pub fn new() -> State {
-        State {
-            loads: Vec::new(),
+impl SimState {
+    pub fn new() -> SimState {
+        SimState {
+            load: 0.,
             battery_capacity: 0.,
             current_stored_energy: 0.,
             solar_nominal_output: 0.,
@@ -27,13 +30,29 @@ impl State {
             latitude: 0.,
             history_dates: Vec::new(),
             now:  NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(0,0,0).unwrap()),
-            step_size: Duration::hours(1)
+            step_size: Duration::hours(1),
+            start_day: 1,
+            end_day: 365
         }
     }
 }
 
+pub fn run_simulation(state: &SimState) -> SimState {
+    let mut state = state.clone();
+    state.now = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+    .and_hms_opt(0, 0, 0).unwrap();
+    state.charge_history = Vec::new();
+    state.history_dates = Vec::new();
+    let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        .and_hms_opt(0, 0, 0).unwrap();
 
-pub fn step(state: &State) -> State {
+    while state.now < end {
+        state = step(&state);
+    }
+    state.clone()
+}
+
+pub fn step(state: &SimState) -> SimState {
     let delta = net_energy(&state);
 
     let unbounded_charge = state.current_stored_energy + delta;
@@ -54,86 +73,73 @@ pub fn step(state: &State) -> State {
 
 #[test]
 fn test_step_1() {
-    let mut state = State::new();
+    let mut state = SimState::new();
     state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
     state.step_size = Duration::hours(2);
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 0.;
-    state.loads = vec![10.,10.];
+    state.load = 20.;
     let net = step(&state);
     assert_eq!(net.current_stored_energy, 10.)
 }
 
 #[test]
 fn test_step_2() {
-    let mut state = State::new();
+    let mut state = SimState::new();
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 10.;
-    state.loads = vec![10.,10.];
+    state.load = 20.;
     let net = step(&state);
     assert_eq!(net.current_stored_energy, 30.)
 }
 
 #[test]
 fn test_step_3() {
-    let mut state = State::new();
+    let mut state = SimState::new();
     state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
 
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 50.;
-    state.loads = vec![10.];
+    state.load = 10.;
     let net = step(&state);
     assert_eq!(net.current_stored_energy, 90.)
 }
 
-pub fn net_energy(state: &State) -> f32 {
+pub fn net_energy(state: &SimState) -> f32 {
     let actual_solar_energy = solar_power(state.solar_nominal_output, state) * bounded_daylight_hours(
         state.now, 
         state.now + state.step_size, 
         daylight_hours(state.latitude, state.now.ordinal0()));
-    let load_energy = total_load(state) * state.step_size.num_minutes() as f32 / 60.;
+    let load_energy = state.load * state.step_size.num_minutes() as f32 / 60.;
     actual_solar_energy - load_energy
 }
 
 #[test]
 fn test_net() {
-    let mut state = State::new();
+    let mut state = SimState::new();
     state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 80.;
-    state.loads = vec![10.,10.,30.];
+    state.load = 50.;
     let net = net_energy(&state);
     assert_eq!(net, 30.)
 }
 
 #[test]
 fn test_net_2() {
-    let mut state = State::new();
+    let mut state = SimState::new();
     state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
     state.battery_capacity = 100.;
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 50.;
-    state.loads = vec![10.];
+    state.load = 10.;
     let net = net_energy(&state);
     assert_eq!(net, 40.)
 }
-
-pub fn total_load(state: &State) -> f32 {
-    state.loads.iter().sum()
-}
-#[test]
-fn test_total_loads() {
-    let mut state = State::new();
-    state.loads = vec![10.,10.,30.];
-    let total = total_load(&state);
-    assert_eq!(total, 50.)
-}
-
-
 
 pub fn daylight_hours(lat: f32, day: u32) -> f32{
 
@@ -245,14 +251,14 @@ fn test_time_comparison() {
 }
 
 pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
-    if a < b {
+    if a < b {        
         a
     } else {
         b
     }
 }
 
-pub fn solar_power(nominal_power: f32, state: &State) -> f32 {
+pub fn solar_power(nominal_power: f32, state: &SimState) -> f32 {
     let start = state.now;
     let end = state.now + state.step_size;
     let light_hours = daylight_hours(state.latitude, state.now.ordinal0());
@@ -362,6 +368,7 @@ pub fn chart(
         //        .transform(FontTransform::Rotate90),
         //)
         .y_label_formatter(&|y| format!("{}", y))
+        .y_desc("Battery Charge")
         .draw()
         .expect("failed to draw chart mesh");
 

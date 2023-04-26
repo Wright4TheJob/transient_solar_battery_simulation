@@ -1,30 +1,44 @@
 use transient_solar_battery_simulation::*;
-use chrono::{Datelike, NaiveDate};
+use iced::{
+    Application,
+    Settings,
+    window,
+};use crate::gui::AppState;
 
-fn main() {
-    // Create state
-    let mut state = State::new();
-    state.solar_nominal_output = 43.;
-    state.latitude = 20.;
-    state.battery_capacity = 300.;
-    state.current_stored_energy = 150.;
-    state.loads.push(10.);
+// fn main() {
+//     // Create state
+//     let mut state = SimState::new();
+//     state.solar_nominal_output = 43.;
+//     state.latitude = 20.;
+//     state.battery_capacity = 500.;
+//     state.current_stored_energy = 150.;
+//     state.loads.push(10.);
 
-    let mut durations = Vec::new();
+//     let mut durations = Vec::new();
 
-    // Iterate
-    let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
-        .and_hms_opt(0, 0, 0).unwrap();
+//     // Iterate
+//     let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+//         .and_hms_opt(0, 0, 0).unwrap();
 
-    while state.now < end {
-        state = step(&state);
-        durations.push(daylight_hours(state.latitude, state.now.ordinal0()));
-    }
-    chart(
-        state.history_dates, 
-        vec![state.charge_history], 
-    vec![durations],
-        vec!["State of Charge".to_string(), "Daylight Hours".to_string()], 
-        None, 
-        true);
+//     while state.now < end {
+//         state = step(&state);
+//         durations.push(daylight_hours(state.latitude, state.now.ordinal0()));
+//     }
+//     chart(
+//         state.history_dates, 
+//         vec![state.charge_history], 
+//     vec![durations],
+//         vec!["State of Charge".to_string(), "Daylight Hours".to_string()], 
+//         None, 
+//         true);
+// }
+
+pub fn main() -> iced::Result {
+    AppState::run(Settings {
+        window: window::Settings {
+            //antialiasing: true,
+            ..window::Settings::default()
+        },
+        ..Settings::default()
+    })
 }

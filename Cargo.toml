@@ -7,4 +7,7 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4"
-plotters = "0.3.4"
+plotters = "0.3"
+iced = {version="0.9", features = ["canvas"]}
+iced_aw = {version="0.5", features = ["number_input"]}
+plotters-iced = "0.8"

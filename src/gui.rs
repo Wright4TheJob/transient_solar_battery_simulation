@@ -9,7 +9,7 @@ use iced::{
 };
 use plotters_iced::{Chart, ChartWidget, DrawingBackend, ChartBuilder};
 use plotters::coord::types::RangedDateTime;
-use chrono::{Datelike, NaiveDateTime};
+use chrono::{Datelike, NaiveDateTime, NaiveDate, NaiveTime, Timelike};
 use plotters::prelude::*;
 use iced_aw::{number_input::NumberInput, style::NumberInputStyles};
 
@@ -47,7 +47,7 @@ impl Application for AppState {
         let plot = DateLineChart::new(
             state.history_dates.clone().into_iter().map(|d| d).collect(),
             vec![state.charge_history.clone()],
-            vec![],
+            vec![state.solar_history.clone()],
             vec!["State of Charge".to_string(), "Daylight Hours".to_string()],
             None,
             false);    
@@ -59,7 +59,7 @@ impl Application for AppState {
     }
 
     fn title(&self) -> String {
-        "Aegion Engineering Dashboard".to_string()
+        "Solar Battery Simulation".to_string()
     }
 
     fn update(&mut self, event: Message) -> Command<Message>{
@@ -76,8 +76,8 @@ impl Application for AppState {
         self.plot = DateLineChart::new(
             self.sim_state.history_dates.clone().into_iter().map(|d| d).collect(),
             vec![self.sim_state.charge_history.clone()],
-            vec![],
-            vec!["State of Charge".to_string(), "Daylight Hours".to_string()],
+            vec![self.sim_state.solar_history.clone()],
+            vec!["State of Charge".to_string(), "Solar Output".to_string()],
             None,
         false); 
         Command::none()
@@ -161,13 +161,19 @@ impl Chart<ChartMessage> for DateLineChart {
 
         //const PLOT_LINE_COLOR: RGBColor = RGBColor(0, 175, 255);
         
-        let from_date = *self.xs.first().clone().expect("No dates to display");
-        let to_date = *self.xs.last().expect("No dates to display");
+        let from_date = *self.xs.first().clone().unwrap_or(
+            &NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+            NaiveTime::from_hms_opt(1,0,0).unwrap()));
+        let to_date = *self.xs.last().unwrap_or(
+            &NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 2).unwrap(), 
+            NaiveTime::from_hms_opt(1,0,0).unwrap()));
     
         let y_max: f32 = self.ys.iter().map(|y| 
             y.clone().into_iter().reduce(f32::max))
             .filter(|i| i.is_some())
-            .map(|i| i.unwrap()).reduce(f32::max).unwrap();
+            .map(|i| i.unwrap()).reduce(f32::max).unwrap_or(1.);
         
         let y_secondary_max: f32 = if self.ys_secondary.len() == 0 {
             1.
@@ -213,7 +219,11 @@ impl Chart<ChartMessage> for DateLineChart {
             //.axis_style(ShapeStyle::from(plotters::style::colors::BLUE.mix(0.45)).stroke_width(1))
             //.y_labels(10)
             .x_labels(6)
-            .x_label_formatter(&|x| format!("{}-{}", x.day(), x.month()))
+            .x_label_formatter(if (to_date - from_date).num_days() < 5 {
+                &|x| format!("{}-{} {}:{:02}", x.day(), x.month(), x.hour(), x.minute())
+            } else {
+                &|x| format!("{}-{}", x.day(), x.month())
+            })
             //.y_label_style(
             //    ("sans-serif", 15)
             //        .into_font()

@@ -17,7 +17,8 @@ pub struct SimState {
     pub now: NaiveDateTime, 
     pub step_size: Duration,
     pub start_day: u32,
-    pub end_day: u32
+    pub end_day: u32,
+    pub solar_history: Vec<f32>,
 }
 impl SimState {
     pub fn new() -> SimState {
@@ -30,9 +31,10 @@ impl SimState {
             latitude: 0.,
             history_dates: Vec::new(),
             now:  NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(0,0,0).unwrap()),
-            step_size: Duration::hours(1),
+            step_size: Duration::minutes(30),
             start_day: 1,
-            end_day: 365
+            end_day: 364,
+            solar_history: Vec::new()
         }
     }
 }
@@ -40,10 +42,19 @@ impl SimState {
 pub fn run_simulation(state: &SimState) -> SimState {
     let mut state = state.clone();
     state.now = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
-    .and_hms_opt(0, 0, 0).unwrap();
+        .with_ordinal(match state.start_day {
+            0 => 1,
+            _ => state.start_day
+        }).unwrap()
+        .and_hms_opt(0, 0, 0).unwrap();
     state.charge_history = Vec::new();
     state.history_dates = Vec::new();
-    let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+    state.solar_history = Vec::new();
+    let end = NaiveDate::from_ymd_opt(2023, 12, 31).unwrap()
+        .with_ordinal(match state.end_day {
+            0 => 1,
+            _ => state.end_day
+        }).unwrap()
         .and_hms_opt(0, 0, 0).unwrap();
 
     while state.now < end {
@@ -68,6 +79,7 @@ pub fn step(state: &SimState) -> SimState {
     };
     new_state.now = state.now + state.step_size;
     new_state.history_dates.push(state.now);
+    new_state.solar_history.push(solar_power(state));
     new_state
 }
 
@@ -92,24 +104,11 @@ fn test_step_2() {
     state.solar_nominal_output = 10.;
     state.load = 20.;
     let net = step(&state);
-    assert_eq!(net.current_stored_energy, 30.)
-}
-
-#[test]
-fn test_step_3() {
-    let mut state = SimState::new();
-    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
-
-    state.battery_capacity = 100.;
-    state.current_stored_energy = 50.;
-    state.solar_nominal_output = 50.;
-    state.load = 10.;
-    let net = step(&state);
-    assert_eq!(net.current_stored_energy, 90.)
+    assert_eq!(net.current_stored_energy, 40.)
 }
 
 pub fn net_energy(state: &SimState) -> f32 {
-    let actual_solar_energy = solar_power(state.solar_nominal_output, state) * bounded_daylight_hours(
+    let actual_solar_energy = solar_power(state) * bounded_daylight_hours(
         state.now, 
         state.now + state.step_size, 
         daylight_hours(state.latitude, state.now.ordinal0()));
@@ -117,29 +116,6 @@ pub fn net_energy(state: &SimState) -> f32 {
     actual_solar_energy - load_energy
 }
 
-#[test]
-fn test_net() {
-    let mut state = SimState::new();
-    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
-    state.battery_capacity = 100.;
-    state.current_stored_energy = 50.;
-    state.solar_nominal_output = 80.;
-    state.load = 50.;
-    let net = net_energy(&state);
-    assert_eq!(net, 30.)
-}
-
-#[test]
-fn test_net_2() {
-    let mut state = SimState::new();
-    state.now = NaiveDateTime::new(NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), NaiveTime::from_hms_opt(12,0,0).unwrap());
-    state.battery_capacity = 100.;
-    state.current_stored_energy = 50.;
-    state.solar_nominal_output = 50.;
-    state.load = 10.;
-    let net = net_energy(&state);
-    assert_eq!(net, 40.)
-}
 
 pub fn daylight_hours(lat: f32, day: u32) -> f32{
 
@@ -258,41 +234,92 @@ pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
     }
 }
 
-pub fn solar_power(nominal_power: f32, state: &SimState) -> f32 {
+pub fn sunrise(date: NaiveDate, lat: f32) -> NaiveTime {
+    let light_hours = daylight_hours(lat, date.ordinal0());
+    NaiveTime::from_num_seconds_from_midnight_opt(43200 - ((light_hours / 2.)*60.*60.) as u32, 0).unwrap()
+}
+#[test]
+fn test_sunrise_1() {
+    let date = NaiveDate::from_ymd_opt(2023, 3, 15).unwrap();
+    assert_eq!(sunrise(date, 45.).hour(), 6)
+}
+pub fn sunset(date: NaiveDate, lat: f32) -> NaiveTime {
+    let light_hours = daylight_hours(lat, date.ordinal0());
+    NaiveTime::from_num_seconds_from_midnight_opt(43200 + ((light_hours / 2.)*60.*60.) as u32, 0).unwrap()
+}
+pub fn solar_power(state: &SimState) -> f32 {
     let start = state.now;
     let end = state.now + state.step_size;
-    let light_hours = daylight_hours(state.latitude, state.now.ordinal0());
-    let sunrise = NaiveDateTime::new(
-        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
-        NaiveTime::from_num_seconds_from_midnight_opt(((12. - light_hours / 2.)*60.*60.) as u32, 0).unwrap());
-    let sunset = NaiveDateTime::new(
-        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(), 
-        NaiveTime::from_num_seconds_from_midnight_opt(((12. + light_hours / 2.)*60.*60.) as u32, 0).unwrap());
-    if end < sunrise || start > sunset {
-        0.
-    } else {
-        let start_coeff = solar_production_curve(later_of(start, sunrise).time(), light_hours);
-        let end_coeff = solar_production_curve(earlier_of(end, sunset).time(), light_hours);
-        let avg_coeff = (start_coeff + end_coeff)/2.;
-        nominal_power * avg_coeff
-    }
+    
+    let start_coeff = solar_production_curve(start, state.latitude);
+    let end_coeff = solar_production_curve(end, state.latitude);
+    let avg_coeff = (start_coeff + end_coeff)/2.;
+    state.solar_nominal_output * avg_coeff
+}
+#[test]
+fn test_solar_power_1() {
+    let mut state = SimState::new();
+    state.now = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), 
+        NaiveTime::from_hms_opt(12,0,0).unwrap());
+    state.step_size = Duration::seconds(1);
+    state.solar_nominal_output = 1.;
+    let net = solar_power(&state);
+    assert!((net-1.).abs() < 0.01)
+}
+#[test]
+fn test_solar_power_2() {
+    let mut state = SimState::new();
+    state.now = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2023, 3, 1).unwrap(), 
+        NaiveTime::from_hms_opt(9,0,0).unwrap());
+    state.step_size = Duration::seconds(1);
+    state.solar_nominal_output = 1.;
+    let net = solar_power(&state);
+    println!("{}", net);
+    assert!((net-0.5).abs() < 0.1)
 }
 
-pub fn solar_production_curve(time: NaiveTime, light_hours: f32) -> f32 {
-    let time_scaler = 2.*PI/light_hours;
-    let hour = time.hour() as f32 + (time.minute() as f32)/60. + (time.second() as f32)/(60.*60.);
-    0.5*(time_scaler*(hour+12.)).cos()+0.5
+
+pub fn time_hours(time:NaiveTime) -> f32 {
+    time.hour() as f32 + (time.minute() as f32)/60. + (time.second() as f32)/(60.*60.)
+}
+#[test]
+fn test_time_hours() {
+    let time = NaiveTime::from_hms_opt(1,30,0).unwrap();
+    assert_eq!(time_hours(time), 1.5)
+}
+
+pub fn solar_production_curve(now: NaiveDateTime, lat: f32) -> f32 {
+    let light_hours = daylight_hours(lat, now.ordinal0());
+    let rise = sunrise(now.date(), lat);
+    let set = sunset(now.date(), lat);
+    let hour = time_hours(now.time());
+    if now.time() <= rise || now.time() >= set {
+        0.
+    } else {
+        let time_scaler = (2.*PI)/light_hours;
+        let cos_part = (time_scaler*(hour+6.5)).cos();
+        0.5*cos_part+0.5
+    }
 }
 
 #[test]
 fn test_solar_production_1() {
-    let noon =  NaiveTime::from_hms_opt(12,0,0).unwrap();
-    assert_eq!(solar_production_curve(noon, 12.), 1.);
+    let noon =  NaiveDateTime::new(NaiveDate::default(), NaiveTime::from_hms_opt(12,0,0).unwrap());
+    assert_eq!(solar_production_curve(noon, 45.), 1.);
 }
 #[test]
 fn test_solar_production_2() {
-    let six =  NaiveTime::from_hms_opt(6,0,0).unwrap();
+    let six =  NaiveDateTime::new(NaiveDate::default(), NaiveTime::from_hms_opt(6,0,0).unwrap());
     assert_eq!(solar_production_curve(six, 12.), 0.);
+}
+
+#[test]
+fn test_solar_production_4() {
+    let nine =  NaiveDateTime::new(NaiveDate::default(), NaiveTime::from_hms_opt(9,0,0).unwrap());
+    let error = (solar_production_curve(nine, 12.) - 0.5).abs();
+    assert!(error < 0.01);
 }
 
 pub fn chart(

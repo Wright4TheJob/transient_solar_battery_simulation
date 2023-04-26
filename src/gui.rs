@@ -51,8 +51,7 @@ impl Application for AppState {
             vec![state.charge_history.clone()],
             Vec::new(),
             vec!["State of Charge".to_string()],
-            None,
-            false);    
+            );    
         (AppState { 
             sim_state: state,
             plot,
@@ -95,8 +94,7 @@ impl Application for AppState {
             vec![self.sim_state.charge_history.clone()],
             secondary_data,
             labels,
-            None,
-        false); 
+        ); 
         Command::none()
     }
     
@@ -186,8 +184,6 @@ pub struct DateLineChart {
     ys: Vec<Vec<f32>>,
     ys_secondary: Vec<Vec<f32>>,
     labels: Vec<String> ,   
-    title: Option<String>,
-    show_legend: bool
 }
 
 impl Chart<ChartMessage> for DateLineChart {
@@ -217,7 +213,7 @@ impl Chart<ChartMessage> for DateLineChart {
         if y_max == 0. {
             y_max = 1.
         }
-        
+
         let y_secondary_max: f32 = if self.ys_secondary.len() == 0 {
             1.
         } else {
@@ -226,62 +222,45 @@ impl Chart<ChartMessage> for DateLineChart {
             .filter(|i| i.is_some())
             .map(|i| i.unwrap()).reduce(f32::max).unwrap()
         };
-    
-        let mut chart = if self.title.is_some(){
-            builder
+
+        let mut chart = builder
             .x_label_area_size(28_i32)
             .y_label_area_size(28_i32)
             .right_y_label_area_size(40)
             .margin(20_i32)
-            .caption(self.title.clone().unwrap().as_str(), ("sans-serif", 30.0))
             .build_cartesian_2d(
                 RangedDateTime::from(from_date..to_date), 
                 0_f32..y_max*1.05).unwrap()
             .set_secondary_coord(
                 RangedDateTime::from(from_date..to_date), 
-                0_f32..y_secondary_max*1.05)
-        } else {
-            builder
-                .x_label_area_size(28_i32)
-                .y_label_area_size(28_i32)
-                .right_y_label_area_size(40)
-                .margin(20_i32)
-                .build_cartesian_2d(
-                    RangedDateTime::from(from_date..to_date), 
-                    0_f32..y_max*1.05).unwrap()
-                .set_secondary_coord(
-                    RangedDateTime::from(from_date..to_date), 
-                    0_f32..y_secondary_max*1.05)
-                // .expect("Failed to build chart")
-        };
-    
+                0_f32..y_secondary_max*1.05);
+
         chart
             .configure_mesh()
-            //.bold_line_style(plotters::style::colors::BLUE.mix(0.1))
-            //.light_line_style(plotters::style::colors::BLUE.mix(0.05))
-            //.axis_style(ShapeStyle::from(plotters::style::colors::BLUE.mix(0.45)).stroke_width(1))
-            //.y_labels(10)
-            .x_labels(6)
+            // .x_labels(6)
             .x_label_formatter(if (to_date - from_date).num_days() < 5 {
                 &|x| format!("{}-{} {}:{:02}", x.day(), x.month(), x.hour(), x.minute())
             } else {
                 &|x| format!("{}-{}", x.day(), x.month())
             })
-            //.y_label_style(
-            //    ("sans-serif", 15)
-            //        .into_font()
+            .y_label_style(
+                ("sans-serif", 16)
+                    .into_font()
             //        .color(&plotters::style::colors::BLUE.mix(0.65))
-            //        .transform(FontTransform::Rotate90),
-            //)
+                    .transform(FontTransform::Rotate90),
+            )
             .y_label_formatter(&|y| format!("{}", y))
+            .axis_desc_style(("sans-serif", 16).into_font().transform(FontTransform::Rotate90))
             .y_desc("Battery Charge")
             .draw()
             .expect("failed to draw chart mesh");
     
+        if self.ys_secondary.len() > 0 {
         chart
             .configure_secondary_axes()
-            .y_desc("Daylight Hours")
+            .y_desc(self.labels.last().unwrap())
             .draw().unwrap();
+        }
     
         let colors = vec![
             &BLUE, 
@@ -339,8 +318,9 @@ impl Chart<ChartMessage> for DateLineChart {
             color_index += 1;
         }
     
-        if self.show_legend {
+        if self.ys_secondary.len() > 0 {
             chart.configure_series_labels()
+            .label_font(("sans-serif", 16))
             .background_style(&WHITE)
             .border_style(&BLACK)
             .draw().expect("Failed to draw legend")    
@@ -350,14 +330,12 @@ impl Chart<ChartMessage> for DateLineChart {
 }
 
 impl DateLineChart {
-    pub fn new(xs: Vec<NaiveDateTime>, ys: Vec<Vec<f32>>, ys_secondary: Vec<Vec<f32>>, labels:Vec<String>, title: Option<String>, show_legend: bool) -> Self {
+    pub fn new(xs: Vec<NaiveDateTime>, ys: Vec<Vec<f32>>, ys_secondary: Vec<Vec<f32>>, labels:Vec<String>) -> Self {
         DateLineChart {
             xs,
             ys, 
             ys_secondary,
             labels,
-            title,
-            show_legend,
         }
     }
     pub fn view(&self)->Element<ChartMessage> {

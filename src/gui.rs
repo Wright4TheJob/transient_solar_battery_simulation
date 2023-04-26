@@ -5,7 +5,7 @@ use iced::{
     alignment::{Horizontal, Vertical, Alignment},
     Length,
     Command,
-    widget::{column, container, horizontal_rule, row, scrollable, text} 
+    widget::{column, container, horizontal_rule, radio, row, scrollable, text} 
 };
 use plotters_iced::{Chart, ChartWidget, DrawingBackend, ChartBuilder};
 use plotters::coord::types::RangedDateTime;
@@ -24,11 +24,13 @@ pub enum Message {
     StartDateChanged(f32),
     EndDateChanged(f32),
     ChartEvent(ChartMessage),
+    AxisChoiceChanged(SecondAxis)
 }
 
 pub struct AppState {
     pub sim_state: SimState,
     pub plot: DateLineChart,
+    pub second_axis: SecondAxis
 }
 
 impl Application for AppState {
@@ -47,13 +49,14 @@ impl Application for AppState {
         let plot = DateLineChart::new(
             state.history_dates.clone().into_iter().map(|d| d).collect(),
             vec![state.charge_history.clone()],
-            vec![state.solar_history.clone()],
-            vec!["State of Charge".to_string(), "Daylight Hours".to_string()],
+            Vec::new(),
+            vec!["State of Charge".to_string()],
             None,
             false);    
         (AppState { 
             sim_state: state,
-            plot
+            plot,
+            second_axis: SecondAxis::None
             }, 
         Command::none())
     }
@@ -70,14 +73,28 @@ impl Application for AppState {
             Message::LatitudeChanged(lat) => self.sim_state.latitude = lat,
             Message::StartDateChanged(day) => self.sim_state.start_day = day as u32,
             Message::EndDateChanged(day) => self.sim_state.end_day = day as u32,
-            Message::ChartEvent(_) => ()
+            Message::ChartEvent(_) => (),
+            Message::AxisChoiceChanged(axis) => self.second_axis = axis,
         }
         self.sim_state = run_simulation(&self.sim_state);
+        let mut labels = vec!["State of Charge".to_string()];
+        let mut secondary_data = Vec::new();
+        match self.second_axis {
+            SecondAxis::None => (),
+            SecondAxis::SolarPower => {
+                labels.push("Solar Output".to_string());
+                secondary_data.push(self.sim_state.solar_history.clone());
+            },
+            SecondAxis::SunlightHours => {
+                labels.push("Daylight Hours".to_string());
+                secondary_data.push(self.sim_state.daylight_history.clone());
+            }
+        }
         self.plot = DateLineChart::new(
             self.sim_state.history_dates.clone().into_iter().map(|d| d).collect(),
             vec![self.sim_state.charge_history.clone()],
-            vec![self.sim_state.solar_history.clone()],
-            vec!["State of Charge".to_string(), "Solar Output".to_string()],
+            secondary_data,
+            labels,
             None,
         false); 
         Command::none()
@@ -99,13 +116,28 @@ impl Application for AppState {
             .style(NumberInputStyles::Default)
             .step(0.1).width(Length::Fixed(80.));
 
-        let start_input = NumberInput::new(self.sim_state.start_day as f32, 1000000000000000000., Message::StartDateChanged)
+        let start_input = NumberInput::new(self.sim_state.start_day as f32, 365., Message::StartDateChanged)
             .style(NumberInputStyles::Default)
             .step(1.).width(Length::Fixed(80.));
 
-        let end_input = NumberInput::new(self.sim_state.end_day as f32, 1000000000000000000., Message::EndDateChanged)
+        let end_input = NumberInput::new(self.sim_state.end_day as f32, 365., Message::EndDateChanged)
             .style(NumberInputStyles::Default)
             .step(1.).width(Length::Fixed(80.));
+
+        let choose_axis =
+        [SecondAxis::None, SecondAxis::SolarPower, SecondAxis::SunlightHours]
+            .iter()
+            .fold(
+                column![text("Choose the secondary axis:")].spacing(10),
+                |column, axis| {
+                    column.push(radio(
+                        format!("{axis:?}"),
+                        *axis,
+                        Some(self.second_axis),
+                        Message::AxisChoiceChanged,
+                    ))
+                },
+            );
 
         let inputs = scrollable(
             column![
@@ -117,6 +149,7 @@ impl Application for AppState {
                 horizontal_rule(1),
                 row![text("Start Day").width(Length::Fill), start_input,],
                 row![text("End Day").width(Length::Fill), end_input,],
+                choose_axis,
                 ].padding(10)
                 .spacing(10)
             .align_items(Alignment::Start)
@@ -139,6 +172,13 @@ impl Application for AppState {
 #[derive(Debug, Clone)]
 pub enum ChartMessage {
     Updated
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SecondAxis {
+    None,
+    SolarPower,
+    SunlightHours,
 }
 
 pub struct DateLineChart {
@@ -170,10 +210,13 @@ impl Chart<ChartMessage> for DateLineChart {
             NaiveDate::from_ymd_opt(2023, 1, 2).unwrap(), 
             NaiveTime::from_hms_opt(1,0,0).unwrap()));
     
-        let y_max: f32 = self.ys.iter().map(|y| 
+        let mut y_max: f32 = self.ys.iter().map(|y| 
             y.clone().into_iter().reduce(f32::max))
             .filter(|i| i.is_some())
             .map(|i| i.unwrap()).reduce(f32::max).unwrap_or(1.);
+        if y_max == 0. {
+            y_max = 1.
+        }
         
         let y_secondary_max: f32 = if self.ys_secondary.len() == 0 {
             1.

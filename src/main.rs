@@ -1,9 +1,6 @@
+use crate::gui::AppState;
+use iced::application;
 use transient_solar_battery_simulation::*;
-use iced::{
-    Application,
-    Settings,
-    window,
-};use crate::gui::AppState;
 
 // fn main() {
 //     // Create state
@@ -25,20 +22,14 @@ use iced::{
 //         durations.push(daylight_hours(state.latitude, state.now.ordinal0()));
 //     }
 //     chart(
-//         state.history_dates, 
-//         vec![state.charge_history], 
+//         state.history_dates,
+//         vec![state.charge_history],
 //     vec![durations],
-//         vec!["State of Charge".to_string(), "Daylight Hours".to_string()], 
-//         None, 
+//         vec!["State of Charge".to_string(), "Daylight Hours".to_string()],
+//         None,
 //         true);
 // }
 
 pub fn main() -> iced::Result {
-    AppState::run(Settings {
-        window: window::Settings {
-            //antialiasing: true,
-            ..window::Settings::default()
-        },
-        ..Settings::default()
-    })
+    application("Solar Simulator", AppState::update, AppState::view).run()
 }

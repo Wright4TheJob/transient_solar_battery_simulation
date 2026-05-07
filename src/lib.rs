@@ -24,12 +24,12 @@ pub struct SimState {
 impl SimState {
     pub fn new() -> SimState {
         SimState {
-            load: 0.,
-            battery_capacity: 0.,
+            load: 25.,
+            battery_capacity: 1000.,
+            solar_nominal_output: 100.,
             current_stored_energy: 0.,
-            solar_nominal_output: 0.,
             charge_history: Vec::new(),
-            latitude: 0.,
+            latitude: 36.,
             history_dates: Vec::new(),
             now: NaiveDateTime::new(
                 NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
@@ -261,11 +261,7 @@ fn test_bounded_daylight_hours_3() {
 }
 
 pub fn later_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
-    if a > b {
-        a
-    } else {
-        b
-    }
+    if a > b { a } else { b }
 }
 
 #[test]
@@ -285,11 +281,7 @@ fn test_time_comparison() {
 }
 
 pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
-    if a < b {
-        a
-    } else {
-        b
-    }
+    if a < b { a } else { b }
 }
 
 pub fn sunrise(date: NaiveDate, lat: f32) -> NaiveTime {

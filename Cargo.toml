@@ -1,13 +1,13 @@
 [package]
 name = "transient_solar_battery_simulation"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 chrono = "0.4"
 plotters = "0.3"
-iced = { version = "0.13", features = ["canvas"] }
-iced_aw = { version = "0.12", features = ["number_input"] }
-plotters-iced = "0.11"
+iced = { version = "0.14", features = ["canvas"] }
+iced_aw = { version = "0.14", features = ["number_input"] }
+plotters-iced2 = "0.14"

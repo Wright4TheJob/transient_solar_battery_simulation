@@ -1,15 +1,15 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use iced::{
-    alignment::{Horizontal, Vertical},
-    widget::{column, container, horizontal_rule, radio, row, scrollable, text},
     Element, Length,
+    alignment::{Horizontal, Vertical},
+    widget::{column, container, radio, row, rule, scrollable, text},
 };
 use iced_aw::number_input::NumberInput;
 use plotters::coord::types::RangedDateTime;
 use plotters::prelude::*;
-use plotters_iced::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
+use plotters_iced2::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
 
-use crate::{run_simulation, SimState};
+use crate::{SimState, run_simulation};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -31,7 +31,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(_flags: ()) -> Self {
+    pub fn new() -> Self {
         let starting_state = SimState::new();
         let state = run_simulation(&starting_state);
         let plot = DateLineChart::new(
@@ -91,7 +91,7 @@ impl AppState {
         );
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let battery_input = NumberInput::new(
             &self.sim_state.battery_capacity,
             0 as f32..=1000000000000000000.,
@@ -165,7 +165,7 @@ impl AppState {
                 ],
                 row![text("Load [W]").width(Length::Fill), load_input],
                 row![text("Latitude [degrees]").width(Length::Fill), lat_input,],
-                horizontal_rule(1),
+                rule::horizontal(1),
                 row![text("Start Day").width(Length::Fill), start_input,],
                 row![text("End Day"), end_input,],
                 choose_axis,
@@ -391,7 +391,7 @@ impl DateLineChart {
             labels,
         }
     }
-    pub fn view(&self) -> Element<ChartMessage> {
+    pub fn view(&self) -> Element<'_, ChartMessage> {
         ChartWidget::new(self).into()
         //.width(Length::Fixed(200.))
         //.height(Length::Fixed(200.))

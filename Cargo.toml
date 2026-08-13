@@ -9,5 +9,5 @@ edition = "2024"
 chrono = "0.4"
 plotters = "0.3"
 iced = { version = "0.14", features = ["canvas"] }
-iced_aw = { version = "0.14", features = ["number_input"] }
+iced_aw = { version = "0.14.1", features = ["number_input"] }
 plotters-iced2 = "0.14"

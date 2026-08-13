@@ -12,3 +12,6 @@ The user interface lets you change most of the simulation parameters to see how 
 * Solar energy is approximated from the input latitude, producing a sinusoidal curve of power from sunrise to sunset.
 * No losses in the battery and inverter are yet modeled. 
 * All energy not being directly consumed by the load is stored in the battery. Any deficit is pulled from the battery.
+
+
+For development work, install the package ```libfontconfig1-dev'''

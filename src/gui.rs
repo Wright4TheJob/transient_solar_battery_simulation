@@ -21,6 +21,7 @@ pub enum Message {
     EndDateChanged(u32),
     ChartEvent(ChartMessage),
     AxisChoiceChanged(SecondAxis),
+    InitialChargeChanged(f32),
 }
 
 #[derive(Default)]
@@ -63,6 +64,7 @@ impl AppState {
             Message::EndDateChanged(day) => self.sim_state.end_day = day as u32,
             Message::ChartEvent(_) => (),
             Message::AxisChoiceChanged(axis) => self.second_axis = axis,
+            Message::InitialChargeChanged(charge) => self.sim_state.initial_charge = charge,
         }
         self.sim_state = run_simulation(&self.sim_state);
         let mut labels = vec!["State of Charge".to_string()];
@@ -98,6 +100,12 @@ impl AppState {
             Message::BatteryCapacityChanged,
         )
         .step(1.);
+        let initial_charge_input = NumberInput::new(
+            &self.sim_state.initial_charge,
+            0 as f32..=100.,
+            Message::InitialChargeChanged,
+        )
+        .step(5.);
         let solar_input = NumberInput::new(
             &self.sim_state.solar_nominal_output,
             0 as f32..=1000000000000000000.,
@@ -159,6 +167,7 @@ impl AppState {
             column![
                 row![text("Settings").width(Length::Fill)],
                 row![text("Battery Capacity [Wh]"), battery_input,],
+                row![text("Initial Charge [%]"), initial_charge_input,],
                 row![
                     text("Solar Power Nominal [W]").width(Length::Fill),
                     solar_input,

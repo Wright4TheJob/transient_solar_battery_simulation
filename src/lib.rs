@@ -20,6 +20,7 @@ pub struct SimState {
     pub end_day: u32,
     pub solar_history: Vec<f32>,
     pub daylight_history: Vec<f32>,
+    pub initial_charge: f32,
 }
 impl SimState {
     pub fn new() -> SimState {
@@ -40,6 +41,7 @@ impl SimState {
             end_day: 364,
             solar_history: Vec::new(),
             daylight_history: Vec::new(),
+            initial_charge: 0.,
         }
     }
 }
@@ -67,7 +69,7 @@ pub fn run_simulation(state: &SimState) -> SimState {
         .and_hms_opt(0, 0, 0)
         .unwrap();
 
-    state.current_stored_energy = 0.;
+    state.current_stored_energy = state.initial_charge * state.battery_capacity / 100.;
     state.charge_history = Vec::new();
     state.history_dates = Vec::new();
     state.solar_history = Vec::new();

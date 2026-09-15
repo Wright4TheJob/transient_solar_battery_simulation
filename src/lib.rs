@@ -184,15 +184,12 @@ fn test_step_2() {
 }
 
 pub fn net_energy(s: &SimState) -> f32 {
-    let mut actual_solar_energy = solar_power(s)
+    let actual_solar_energy = solar_power(s)
         * bounded_daylight_hours(
             s.now,
             s.now + s.step_size,
             daylight_hours(s.latitude, s.now.ordinal0()),
         );
-    if s.day_in_cycle <= s.reduced_power_days {
-        actual_solar_energy = actual_solar_energy * s.reduced_power_percent
-    }
     let load_energy = s.load * s.step_size.num_minutes() as f32 / 60.;
     actual_solar_energy - load_energy
 }
@@ -352,14 +349,19 @@ pub fn sunset(date: NaiveDate, lat: f32) -> NaiveTime {
     )
     .unwrap()
 }
-pub fn solar_power(state: &SimState) -> f32 {
-    let start = state.now;
-    let end = state.now + state.step_size;
+pub fn solar_power(s: &SimState) -> f32 {
+    let start = s.now;
+    let end = s.now + s.step_size;
 
-    let start_coeff = solar_production_curve(start, state.latitude);
-    let end_coeff = solar_production_curve(end, state.latitude);
+    let start_coeff = solar_production_curve(start, s.latitude);
+    let end_coeff = solar_production_curve(end, s.latitude);
     let avg_coeff = (start_coeff + end_coeff) / 2.;
-    state.solar_nominal_output * avg_coeff
+    let mut actual_solar_energy = s.solar_nominal_output * avg_coeff;
+
+    if s.day_in_cycle <= s.reduced_power_days {
+        actual_solar_energy = actual_solar_energy * s.reduced_power_percent
+    }
+    actual_solar_energy
 }
 
 #[test]

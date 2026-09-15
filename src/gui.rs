@@ -22,6 +22,9 @@ pub enum Message {
     ChartEvent(ChartMessage),
     AxisChoiceChanged(SecondAxis),
     InitialChargeChanged(f32),
+    ReducedPowerPercentChanged(usize),
+    ReducedPowerDaysChanged(usize),
+    ReducedPowerDaysCycleChanged(usize),
 }
 
 #[derive(Default)]
@@ -65,6 +68,13 @@ impl AppState {
             Message::ChartEvent(_) => (),
             Message::AxisChoiceChanged(axis) => self.second_axis = axis,
             Message::InitialChargeChanged(charge) => self.sim_state.initial_charge = charge,
+            Message::ReducedPowerPercentChanged(percent) => {
+                self.sim_state.reduced_power_percent = percent as f32 / 100.
+            }
+            Message::ReducedPowerDaysChanged(days) => self.sim_state.reduced_power_days = days,
+            Message::ReducedPowerDaysCycleChanged(cycle) => {
+                self.sim_state.reduced_power_days_cycle = cycle
+            }
         }
         self.sim_state = run_simulation(&self.sim_state);
         let mut labels = vec!["State of Charge".to_string()];
@@ -145,6 +155,30 @@ impl AppState {
         .step(1)
         .width(Length::Fixed(80.));
 
+        let reduced_power_percent_input = NumberInput::new(
+            &((self.sim_state.reduced_power_percent.clone() * 100.) as usize),
+            0..=100,
+            Message::ReducedPowerPercentChanged,
+        )
+        .step(10)
+        .width(Length::Fixed(80.));
+
+        let reduced_power_days = NumberInput::new(
+            &self.sim_state.reduced_power_days,
+            0. as usize..=365 as usize,
+            Message::ReducedPowerDaysChanged,
+        )
+        .step(1)
+        .width(Length::Fixed(80.));
+
+        let reduced_power_days_cycle = NumberInput::new(
+            &self.sim_state.reduced_power_days_cycle,
+            0 as usize..=365 as usize,
+            Message::ReducedPowerDaysCycleChanged,
+        )
+        .step(1)
+        .width(Length::Fixed(80.));
+
         let choose_axis = [
             SecondAxis::None,
             SecondAxis::SolarPower,
@@ -177,6 +211,15 @@ impl AppState {
                 rule::horizontal(1),
                 row![text("Start Day").width(Length::Fill), start_input,],
                 row![text("End Day"), end_input,],
+                rule::horizontal(1),
+                row![text("Cloudy Day output [%]"), reduced_power_percent_input,],
+                row![reduced_power_days, text("cloudy days")],
+                row![
+                    text("out of every "),
+                    reduced_power_days_cycle,
+                    text(" days")
+                ],
+                rule::horizontal(1),
                 choose_axis,
             ]
             .padding(10)

@@ -21,6 +21,10 @@ pub struct SimState {
     pub solar_history: Vec<f32>,
     pub daylight_history: Vec<f32>,
     pub initial_charge: f32,
+    pub reduced_power_percent: f32,
+    pub reduced_power_days: usize,
+    pub reduced_power_days_cycle: usize,
+    day_in_cycle: usize,
 }
 impl SimState {
     pub fn new() -> SimState {
@@ -42,6 +46,10 @@ impl SimState {
             solar_history: Vec::new(),
             daylight_history: Vec::new(),
             initial_charge: 0.,
+            reduced_power_percent: 1.0,
+            reduced_power_days: 1,
+            reduced_power_days_cycle: 2,
+            day_in_cycle: 1,
         }
     }
 }
@@ -98,20 +106,54 @@ pub fn step(state: &SimState) -> SimState {
 
     let mut new_state = state.clone();
     new_state.charge_history.push(state.current_stored_energy);
-    new_state.current_stored_energy = if unbounded_charge < 0. {
-        0.
-    } else if unbounded_charge > state.battery_capacity {
-        state.battery_capacity
-    } else {
-        state.current_stored_energy + delta
-    };
+    new_state.current_stored_energy = clip(unbounded_charge, 0., state.battery_capacity);
     new_state.now = state.now + state.step_size;
+    if new_state.now.day() != state.now.day() {
+        new_state.day_in_cycle += 1;
+        if new_state.day_in_cycle > state.reduced_power_days_cycle {
+            new_state.day_in_cycle = 1;
+        }
+    }
     new_state.history_dates.push(state.now);
     new_state.solar_history.push(solar_power(state));
     new_state
         .daylight_history
         .push(daylight_hours(state.latitude, state.now.ordinal0()));
     new_state
+}
+
+#[test]
+fn test_clipping_min() {
+    let lower = 0.;
+    let upper = 1.;
+    let val = -0.5;
+    assert_eq!(clip(val, lower, upper), 0.)
+}
+
+#[test]
+fn test_clip_max() {
+    let lower = 0.;
+    let upper = 1.;
+    let val = 1.5;
+    assert_eq!(clip(val, lower, upper), 1.)
+}
+
+#[test]
+fn test_clip() {
+    let lower = 0.;
+    let upper = 1.;
+    let val = 0.5;
+    assert_eq!(clip(val, lower, upper), 0.5)
+}
+
+fn clip(val: f32, lower: f32, upper: f32) -> f32 {
+    if val < lower {
+        lower
+    } else if val > upper {
+        upper
+    } else {
+        val
+    }
 }
 
 #[test]
@@ -141,14 +183,17 @@ fn test_step_2() {
     assert_eq!(net.current_stored_energy, 40.)
 }
 
-pub fn net_energy(state: &SimState) -> f32 {
-    let actual_solar_energy = solar_power(state)
+pub fn net_energy(s: &SimState) -> f32 {
+    let mut actual_solar_energy = solar_power(s)
         * bounded_daylight_hours(
-            state.now,
-            state.now + state.step_size,
-            daylight_hours(state.latitude, state.now.ordinal0()),
+            s.now,
+            s.now + s.step_size,
+            daylight_hours(s.latitude, s.now.ordinal0()),
         );
-    let load_energy = state.load * state.step_size.num_minutes() as f32 / 60.;
+    if s.day_in_cycle <= s.reduced_power_days {
+        actual_solar_energy = actual_solar_energy * s.reduced_power_percent
+    }
+    let load_energy = s.load * s.step_size.num_minutes() as f32 / 60.;
     actual_solar_energy - load_energy
 }
 

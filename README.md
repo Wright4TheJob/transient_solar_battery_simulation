@@ -15,3 +15,20 @@ The user interface lets you change most of the simulation parameters to see how 
 
 
 For development work, install the package ```libfontconfig1-dev'''
+
+## Roadmap
+- [ ] Add cloudy day simulation
+  - [ ] n consecutive lower performing days every m days
+  - [ ] Select degree of reduction
+    - [ ] Occasional clouds
+    - [ ] Overcast
+    - [ ] Storming (0%)
+- [ ] Point use energy loads
+  - [ ] Frequency (hourly, daily)
+  - [ ] Quantity (Wh)
+  - [ ] Time of day
+- [ ] Example activities with pre-calculated energy loads
+  - [ ] Load of laundry
+  - [ ] Load of dishes
+  - [ ] Instant pot batch
+  - [ ] Custom (See above for custom value)

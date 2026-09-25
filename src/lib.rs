@@ -1,10 +1,13 @@
 pub mod gui;
-
+use crate::gui::LoadMessage;
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use plotters::coord::types::RangedDateTime;
 use plotters::prelude::*;
 use std::f32::consts::PI;
 
+use iced::widget::{row, text};
+use iced::{Element, Length};
+use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct SimState {
     pub load: f32,                  // watts
@@ -25,6 +28,7 @@ pub struct SimState {
     pub reduced_power_days: usize,
     pub reduced_power_days_cycle: usize,
     day_in_cycle: usize,
+    pub point_loads: HashMap<usize, InstantLoad>,
 }
 impl SimState {
     pub fn new() -> SimState {
@@ -50,7 +54,12 @@ impl SimState {
             reduced_power_days: 1,
             reduced_power_days_cycle: 2,
             day_in_cycle: 1,
+            point_loads: HashMap::new(),
         }
+    }
+
+    pub fn read_point_loads(&self) -> f32 {
+        self.point_loads.iter().map(|(_, l)| l.energy).sum::<f32>()
     }
 }
 
@@ -100,6 +109,7 @@ pub fn run_simulation(state: &SimState) -> SimState {
 }
 
 pub fn step(state: &SimState) -> SimState {
+    let state_reference = state.clone();
     let delta = net_energy(&state);
 
     let unbounded_charge = state.current_stored_energy + delta;
@@ -110,15 +120,16 @@ pub fn step(state: &SimState) -> SimState {
     new_state.now = state.now + state.step_size;
     if new_state.now.day() != state.now.day() {
         new_state.day_in_cycle += 1;
-        if new_state.day_in_cycle > state.reduced_power_days_cycle {
+        if new_state.day_in_cycle > state_reference.reduced_power_days_cycle {
             new_state.day_in_cycle = 1;
         }
     }
-    new_state.history_dates.push(state.now);
-    new_state.solar_history.push(solar_power(state));
-    new_state
-        .daylight_history
-        .push(daylight_hours(state.latitude, state.now.ordinal0()));
+    new_state.history_dates.push(state_reference.now);
+    new_state.solar_history.push(solar_power(&state));
+    new_state.daylight_history.push(daylight_hours(
+        state_reference.latitude,
+        state_reference.now.ordinal0(),
+    ));
     new_state
 }
 
@@ -184,14 +195,19 @@ fn test_step_2() {
 }
 
 pub fn net_energy(s: &SimState) -> f32 {
-    let actual_solar_energy = solar_power(s)
+    let actual_solar_energy = solar_power(&s)
         * bounded_daylight_hours(
             s.now,
             s.now + s.step_size,
             daylight_hours(s.latitude, s.now.ordinal0()),
         );
     let load_energy = s.load * s.step_size.num_minutes() as f32 / 60.;
-    actual_solar_energy - load_energy
+    let point_load_energy = s
+        .point_loads
+        .iter()
+        .map(|(_, l)| l.energy(s.now, s.step_size))
+        .sum::<f32>();
+    actual_solar_energy - load_energy - point_load_energy
 }
 
 pub fn daylight_hours(lat: f32, day: u32) -> f32 {
@@ -599,4 +615,66 @@ pub fn chart(
     }
     root.present().expect("Unable to write result to file, please make sure 'plotters-doc-data' dir exists under current dir");
     println!("Result has been saved to {}", output_file);
+}
+#[derive(Debug, Clone)]
+pub enum LoadFrequency {
+    Hourly,
+    Daily,
+    Weekly,
+}
+#[derive(Debug, Clone)]
+pub struct InstantLoad {
+    pub time: NaiveTime,
+    pub energy: f32, // Wh
+    pub frequency: LoadFrequency,
+    pub id: usize,
+}
+
+impl InstantLoad {
+    pub fn energy(&self, now: NaiveDateTime, step: Duration) -> f32 {
+        let start = now - step;
+        match self.frequency {
+            LoadFrequency::Hourly => {
+                if start.hour() != now.hour() {
+                    self.energy
+                } else {
+                    0.0
+                }
+            }
+            LoadFrequency::Daily => {
+                if start.time() < self.time && self.time <= now.time() {
+                    self.energy
+                } else {
+                    0.0
+                }
+            }
+            LoadFrequency::Weekly => {
+                let time_day = NaiveDateTime::new(
+                    NaiveDate::from_ymd_opt(now.year(), now.month(), now.day()).unwrap(),
+                    self.time,
+                );
+                if start < time_day && time_day <= now {
+                    self.energy
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
+    pub fn view(&self, _: usize) -> Element<'_, LoadMessage> {
+        let row = match self.frequency {
+            LoadFrequency::Daily => row![text("Daily Load [W]").width(Length::Fill),],
+            LoadFrequency::Weekly => row![text("Weekly Load [W]").width(Length::Fill),],
+            LoadFrequency::Hourly => row![text("Monthly Load [W]").width(Length::Fill),],
+        };
+        row.into()
+    }
+    pub fn update(&mut self, message: LoadMessage) {
+        match message {
+            LoadMessage::FrequencyChanged(f) => self.frequency = f,
+            LoadMessage::LoadChanged(e) => self.energy = e,
+            LoadMessage::TimeChanged(t) => self.time = t,
+        }
+    }
 }

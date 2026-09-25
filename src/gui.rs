@@ -2,14 +2,14 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use iced::{
     Element, Length,
     alignment::{Horizontal, Vertical},
-    widget::{column, container, radio, row, rule, scrollable, text},
+    widget::{Button, column, container, keyed_column, radio, row, rule, scrollable, text},
 };
 use iced_aw::number_input::NumberInput;
 use plotters::coord::types::RangedDateTime;
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
 
-use crate::{SimState, run_simulation};
+use crate::{InstantLoad, LoadFrequency, SimState, run_simulation};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -25,6 +25,15 @@ pub enum Message {
     ReducedPowerPercentChanged(usize),
     ReducedPowerDaysChanged(usize),
     ReducedPowerDaysCycleChanged(usize),
+    LoadMessage(usize, LoadMessage),
+    NewLoad,
+}
+
+#[derive(Debug, Clone)]
+pub enum LoadMessage {
+    FrequencyChanged(LoadFrequency),
+    LoadChanged(f32),
+    TimeChanged(NaiveTime),
 }
 
 #[derive(Default)]
@@ -32,6 +41,7 @@ pub struct AppState {
     pub sim_state: SimState,
     pub plot: DateLineChart,
     pub second_axis: SecondAxis,
+    pub next_load_id: usize,
 }
 
 impl AppState {
@@ -48,6 +58,7 @@ impl AppState {
             sim_state: state,
             plot,
             second_axis: SecondAxis::None,
+            next_load_id: 0,
         }
     }
 
@@ -74,6 +85,23 @@ impl AppState {
             Message::ReducedPowerDaysChanged(days) => self.sim_state.reduced_power_days = days,
             Message::ReducedPowerDaysCycleChanged(cycle) => {
                 self.sim_state.reduced_power_days_cycle = cycle
+            }
+            Message::LoadMessage(id, message) => {
+                if let Some(load) = self.sim_state.point_loads.get_mut(&id) {
+                    load.update(message);
+                }
+            }
+            Message::NewLoad => {
+                self.sim_state.point_loads.insert(
+                    self.next_load_id,
+                    InstantLoad {
+                        time: NaiveTime::default(),
+                        energy: 0.,
+                        frequency: LoadFrequency::Daily,
+                        id: self.next_load_id,
+                    },
+                );
+                self.next_load_id += 1;
             }
         }
         self.sim_state = run_simulation(&self.sim_state);
@@ -196,39 +224,49 @@ impl AppState {
                 ))
             },
         );
-
-        let inputs = scrollable(
-            column![
-                row![text("Settings").width(Length::Fill)],
-                row![text("Battery Capacity [Wh]"), battery_input,],
-                row![text("Initial Charge [%]"), initial_charge_input,],
-                row![
-                    text("Solar Power Nominal [W]").width(Length::Fill),
-                    solar_input,
-                ],
-                row![text("Load [W]").width(Length::Fill), load_input],
-                row![text("Latitude [degrees]").width(Length::Fill), lat_input,],
-                rule::horizontal(1),
-                row![text("Start Day").width(Length::Fill), start_input,],
-                row![text("End Day"), end_input,],
-                rule::horizontal(1),
-                row![text("Cloudy Day output [%]"), reduced_power_percent_input,],
-                row![reduced_power_days, text("cloudy days")],
-                row![
-                    text("out of every "),
-                    reduced_power_days_cycle,
-                    text(" days")
-                ],
-                rule::horizontal(1),
-                choose_axis,
-            ]
-            .padding(10)
-            .spacing(10)
-            .width(Length::Shrink),
-        )
-        .width(Length::Fixed(250.));
-
-        let content = row![inputs, self.plot.view().map(Message::ChartEvent),];
+        let new_load_button = Button::new("+")
+            .width(Length::Fixed(25.))
+            .on_press(Message::NewLoad);
+        let loads = keyed_column(self.sim_state.point_loads.iter().map(|(id, l)| {
+            (
+                l.id,
+                l.view(*id)
+                    .map(move |message| Message::LoadMessage(*id, message)),
+            )
+        }))
+        .spacing(10);
+        let inputs = column![
+            row![text("Settings").width(Length::Fill)],
+            row![text("Battery Capacity [Wh]"), battery_input,],
+            row![text("Initial Charge [%]"), initial_charge_input,],
+            row![
+                text("Solar Power Nominal [W]").width(Length::Fill),
+                solar_input,
+            ],
+            row![text("Load [W]").width(Length::Fill), load_input],
+            row![text("Latitude [degrees]").width(Length::Fill), lat_input,],
+            rule::horizontal(1),
+            row![text("Start Day").width(Length::Fill), start_input,],
+            row![text("End Day"), end_input,],
+            rule::horizontal(1),
+            row![text("Cloudy Day output [%]"), reduced_power_percent_input,],
+            row![reduced_power_days, text("cloudy days")],
+            row![
+                text("out of every "),
+                reduced_power_days_cycle,
+                text(" days")
+            ],
+            rule::horizontal(1),
+            row![text("Instant Loads").width(Length::Fill), new_load_button],
+            loads,
+            rule::horizontal(1),
+            choose_axis
+        ];
+        let content = row![
+            scrollable(inputs.padding(10).spacing(10).width(Length::Shrink))
+                .width(Length::Fixed(250.)),
+            self.plot.view().map(Message::ChartEvent),
+        ];
 
         container(content)
             .height(Length::Fill)

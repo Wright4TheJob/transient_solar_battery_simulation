@@ -9,7 +9,7 @@ use plotters::coord::types::RangedDateTime;
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
 
-use crate::{InstantLoad, LoadFrequency, SimState, run_simulation};
+use crate::{InstantLoad, LoadFrequency, SimState, Weekday, run_simulation};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -29,11 +29,13 @@ pub enum Message {
     NewLoad,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LoadMessage {
     FrequencyChanged(LoadFrequency),
     LoadChanged(f32),
-    TimeChanged(NaiveTime),
+    TimeChanged(u32),
+    Delete,
+    WeekdayChanged(Weekday),
 }
 
 #[derive(Default)]
@@ -42,12 +44,18 @@ pub struct AppState {
     pub plot: DateLineChart,
     pub second_axis: SecondAxis,
     pub next_load_id: usize,
+    pub frequency_labels: Vec<String>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let starting_state = SimState::new();
         let state = run_simulation(&starting_state);
+        let frequency_labels = vec![
+            "Hourly".to_string(),
+            "Daily".to_string(),
+            "Weekly".to_string(),
+        ];
         let plot = DateLineChart::new(
             state.history_dates.clone().into_iter().map(|d| d).collect(),
             vec![state.charge_history.clone()],
@@ -59,6 +67,7 @@ impl AppState {
             plot,
             second_axis: SecondAxis::None,
             next_load_id: 0,
+            frequency_labels: frequency_labels,
         }
     }
 
@@ -87,6 +96,9 @@ impl AppState {
                 self.sim_state.reduced_power_days_cycle = cycle
             }
             Message::LoadMessage(id, message) => {
+                if message == LoadMessage::Delete {
+                    self.sim_state.point_loads.remove(&id);
+                }
                 if let Some(load) = self.sim_state.point_loads.get_mut(&id) {
                     load.update(message);
                 }
@@ -95,10 +107,11 @@ impl AppState {
                 self.sim_state.point_loads.insert(
                     self.next_load_id,
                     InstantLoad {
-                        time: NaiveTime::default(),
-                        energy: 0.,
+                        time: NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                        energy: 100.,
                         frequency: LoadFrequency::Daily,
                         id: self.next_load_id,
+                        weekday: Weekday::Monday,
                     },
                 );
                 self.next_load_id += 1;
@@ -156,56 +169,49 @@ impl AppState {
             0 as f32..=1000000000000000000.,
             Message::LoadChanged,
         )
-        .step(1.)
-        .width(Length::Fixed(80.));
+        .step(1.);
 
         let lat_input = NumberInput::new(
             &self.sim_state.latitude,
             0 as f32..=1000000000000000000.,
             Message::LatitudeChanged,
         )
-        .step(0.1)
-        .width(Length::Fixed(80.));
+        .step(0.1);
 
         let start_input = NumberInput::new(
             &self.sim_state.start_day,
             0 as u32..=365 as u32,
             Message::StartDateChanged,
         )
-        .step(1)
-        .width(Length::Fixed(80.));
+        .step(1);
 
         let end_input = NumberInput::new(
             &self.sim_state.end_day,
             0 as u32..=365 as u32,
             Message::EndDateChanged,
         )
-        .step(1)
-        .width(Length::Fixed(80.));
+        .step(1);
 
         let reduced_power_percent_input = NumberInput::new(
             &((self.sim_state.reduced_power_percent.clone() * 100.) as usize),
             0..=100,
             Message::ReducedPowerPercentChanged,
         )
-        .step(10)
-        .width(Length::Fixed(80.));
+        .step(10);
 
         let reduced_power_days = NumberInput::new(
             &self.sim_state.reduced_power_days,
             0. as usize..=365 as usize,
             Message::ReducedPowerDaysChanged,
         )
-        .step(1)
-        .width(Length::Fixed(80.));
+        .step(1);
 
         let reduced_power_days_cycle = NumberInput::new(
             &self.sim_state.reduced_power_days_cycle,
             0 as usize..=365 as usize,
             Message::ReducedPowerDaysCycleChanged,
         )
-        .step(1)
-        .width(Length::Fixed(80.));
+        .step(1);
 
         let choose_axis = [
             SecondAxis::None,
@@ -227,7 +233,7 @@ impl AppState {
         let new_load_button = Button::new("+")
             .width(Length::Fixed(25.))
             .on_press(Message::NewLoad);
-        let loads = keyed_column(self.sim_state.point_loads.iter().map(|(id, l)| {
+        let loads = keyed_column(self.sim_state.point_loads.iter().map(move |(id, l)| {
             (
                 l.id,
                 l.view(*id)
@@ -235,25 +241,50 @@ impl AppState {
             )
         }))
         .spacing(10);
+        let number_input_width = 100.;
         let inputs = column![
             row![text("Settings").width(Length::Fill)],
-            row![text("Battery Capacity [Wh]"), battery_input,],
-            row![text("Initial Charge [%]"), initial_charge_input,],
+            row![
+                text("Battery Capacity [Wh]").width(Length::Fill),
+                battery_input.width(Length::Fixed(number_input_width)),
+            ],
+            row![
+                text("Initial Charge [%]").width(Length::Fill),
+                initial_charge_input.width(Length::Fixed(number_input_width)),
+            ],
             row![
                 text("Solar Power Nominal [W]").width(Length::Fill),
-                solar_input,
+                solar_input.width(Length::Fixed(number_input_width)),
             ],
-            row![text("Load [W]").width(Length::Fill), load_input],
-            row![text("Latitude [degrees]").width(Length::Fill), lat_input,],
+            row![
+                text("Load [W]").width(Length::Fill),
+                load_input.width(Length::Fixed(number_input_width))
+            ],
+            row![
+                text("Latitude [degrees]").width(Length::Fill),
+                lat_input.width(Length::Fixed(number_input_width)),
+            ],
             rule::horizontal(1),
-            row![text("Start Day").width(Length::Fill), start_input,],
-            row![text("End Day"), end_input,],
+            row![
+                text("Start Day").width(Length::Fill),
+                start_input.width(Length::Fixed(number_input_width)),
+            ],
+            row![
+                text("End Day").width(Length::Fill),
+                end_input.width(Length::Fixed(number_input_width)),
+            ],
             rule::horizontal(1),
-            row![text("Cloudy Day output [%]"), reduced_power_percent_input,],
-            row![reduced_power_days, text("cloudy days")],
+            row![
+                text("Cloudy Day output [%]").width(Length::Fill),
+                reduced_power_percent_input.width(Length::Fixed(number_input_width)),
+            ],
+            row![
+                reduced_power_days.width(Length::Fixed(number_input_width)),
+                text("cloudy days")
+            ],
             row![
                 text("out of every "),
-                reduced_power_days_cycle,
+                reduced_power_days_cycle.width(Length::Fixed(number_input_width)),
                 text(" days")
             ],
             rule::horizontal(1),
@@ -263,8 +294,8 @@ impl AppState {
             choose_axis
         ];
         let content = row![
-            scrollable(inputs.padding(10).spacing(10).width(Length::Shrink))
-                .width(Length::Fixed(250.)),
+            scrollable(inputs.padding(10).spacing(10).width(Length::Fill))
+                .width(Length::Fixed(350.)),
             self.plot.view().map(Message::ChartEvent),
         ];
 

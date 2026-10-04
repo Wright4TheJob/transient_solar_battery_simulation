@@ -117,7 +117,7 @@ impl AppState {
                 self.next_load_id += 1;
             }
         }
-        self.sim_state.clone().run_simulation();
+        self.sim_state.run_simulation();
         let mut labels = vec!["State of Charge".to_string()];
         let mut secondary_data = Vec::new();
         match self.second_axis {
@@ -159,38 +159,34 @@ impl AppState {
         .step(5.);
         let solar_input = NumberInput::new(
             &self.sim_state.solar_nominal_output,
-            0 as f32..=1000000000000000000.,
+            0. ..=1000000000000000000.,
             Message::SolarCapacityChanged,
         )
         .step(1.);
 
         let load_input = NumberInput::new(
             &self.sim_state.load,
-            0 as f32..=1000000000000000000.,
+            0. ..=1000000000000000000.,
             Message::LoadChanged,
         )
         .step(1.);
 
         let lat_input = NumberInput::new(
             &self.sim_state.latitude,
-            0 as f32..=1000000000000000000.,
+            0. ..=1000000000000000000.,
             Message::LatitudeChanged,
         )
-        .step(0.1);
+        .step(1.);
 
         let start_input = NumberInput::new(
             &self.sim_state.start_day,
-            0 as u32..=365 as u32,
+            0..=365,
             Message::StartDateChanged,
         )
         .step(1);
 
-        let end_input = NumberInput::new(
-            &self.sim_state.end_day,
-            0 as u32..=365 as u32,
-            Message::EndDateChanged,
-        )
-        .step(1);
+        let end_input =
+            NumberInput::new(&self.sim_state.end_day, 0..=365, Message::EndDateChanged).step(1);
 
         let reduced_power_percent_input = NumberInput::new(
             &((self.sim_state.reduced_power_percent.clone() * 100.) as usize),
@@ -201,14 +197,14 @@ impl AppState {
 
         let reduced_power_days = NumberInput::new(
             &self.sim_state.reduced_power_days,
-            0. as usize..=365 as usize,
+            0..=365,
             Message::ReducedPowerDaysChanged,
         )
         .step(1);
 
         let reduced_power_days_cycle = NumberInput::new(
             &self.sim_state.reduced_power_days_cycle,
-            0 as usize..=365 as usize,
+            0..=365,
             Message::ReducedPowerDaysCycleChanged,
         )
         .step(1);

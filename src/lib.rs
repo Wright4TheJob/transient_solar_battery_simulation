@@ -1,11 +1,8 @@
+pub mod chart;
 pub mod gui;
-use crate::gui::LoadMessage;
+pub mod instant_load;
+use crate::instant_load::InstantLoad;
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
-use iced::widget::{Button, column, pick_list, row, rule, text};
-use iced::{Element, Length};
-use iced_aw::NumberInput;
-use plotters::coord::types::RangedDateTime;
-use plotters::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 #[derive(Debug, Clone)]
@@ -59,7 +56,87 @@ impl SimState {
     }
 
     pub fn read_point_loads(&self) -> f32 {
-        self.point_loads.iter().map(|(_, l)| l.energy).sum::<f32>()
+        self.point_loads.values().map(|l| l.energy).sum::<f32>()
+    }
+    pub fn run_simulation(&mut self) {
+        self.now = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .with_ordinal(match self.start_day {
+                0 => 1,
+                _ => self.start_day,
+            })
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        self.current_stored_energy = self.initial_charge * self.battery_capacity / 100.;
+        self.charge_history = Vec::new();
+        self.history_dates = Vec::new();
+        self.solar_history = Vec::new();
+        self.daylight_history = Vec::new();
+
+        let end = NaiveDate::from_ymd_opt(2023, 12, 31)
+            .unwrap()
+            .with_ordinal(match self.end_day {
+                0 => 1,
+                _ => self.end_day,
+            })
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        while self.now < end {
+            self.step();
+        }
+    }
+    pub fn step(&mut self) {
+        let delta = self.net_energy();
+        let unbounded_charge = self.current_stored_energy + delta;
+
+        self.charge_history.push(self.current_stored_energy);
+        self.current_stored_energy = clip(unbounded_charge, 0., self.battery_capacity);
+        let last_day = self.now.day();
+        self.now += self.step_size;
+        if self.now.day() != last_day {
+            self.day_in_cycle += 1;
+            if self.day_in_cycle > self.reduced_power_days_cycle {
+                self.day_in_cycle = 1;
+            }
+        }
+        self.history_dates.push(self.now);
+        self.solar_history.push(self.solar_power());
+        self.daylight_history
+            .push(daylight_hours(self.latitude, self.now.ordinal0()));
+    }
+    pub fn actual_solar_energy(&self) -> f32 {
+        self.solar_power() * bounded_daylight_hours(self.now, self.now + self.step_size)
+    }
+    pub fn steady_load_energy(&self) -> f32 {
+        self.load * self.step_size.num_minutes() as f32 / 60.
+    }
+    pub fn point_load_energy(&self) -> f32 {
+        self.point_loads
+            .values()
+            .map(|l| l.energy(self.now, self.step_size))
+            .sum::<f32>()
+    }
+    pub fn net_energy(&self) -> f32 {
+        self.actual_solar_energy() - self.steady_load_energy() - self.point_load_energy()
+    }
+    #[must_use]
+    pub fn solar_power(&self) -> f32 {
+        let start = self.now;
+        let end = self.now + self.step_size;
+
+        let start_coeff = solar_production_curve(start, self.latitude);
+        let end_coeff = solar_production_curve(end, self.latitude);
+        let avg_coeff = f32::midpoint(start_coeff, end_coeff);
+        let mut actual_solar_energy = self.solar_nominal_output * avg_coeff;
+
+        if self.day_in_cycle <= self.reduced_power_days {
+            actual_solar_energy *= self.reduced_power_percent;
+        }
+        actual_solar_energy
     }
 }
 
@@ -72,65 +149,6 @@ impl Default for SimState {
         state.latitude = 36.;
         state
     }
-}
-
-pub fn run_simulation(state: &SimState) -> SimState {
-    let mut state = state.clone();
-    state.now = NaiveDate::from_ymd_opt(2023, 1, 1)
-        .unwrap()
-        .with_ordinal(match state.start_day {
-            0 => 1,
-            _ => state.start_day,
-        })
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
-
-    state.current_stored_energy = state.initial_charge * state.battery_capacity / 100.;
-    state.charge_history = Vec::new();
-    state.history_dates = Vec::new();
-    state.solar_history = Vec::new();
-    state.daylight_history = Vec::new();
-
-    let end = NaiveDate::from_ymd_opt(2023, 12, 31)
-        .unwrap()
-        .with_ordinal(match state.end_day {
-            0 => 1,
-            _ => state.end_day,
-        })
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
-
-    while state.now < end {
-        state = step(&state);
-    }
-    state.clone()
-}
-
-pub fn step(state: &SimState) -> SimState {
-    let state_reference = state.clone();
-    let delta = net_energy(&state);
-
-    let unbounded_charge = state.current_stored_energy + delta;
-
-    let mut new_state = state.clone();
-    new_state.charge_history.push(state.current_stored_energy);
-    new_state.current_stored_energy = clip(unbounded_charge, 0., state.battery_capacity);
-    new_state.now = state.now + state.step_size;
-    if new_state.now.day() != state.now.day() {
-        new_state.day_in_cycle += 1;
-        if new_state.day_in_cycle > state_reference.reduced_power_days_cycle {
-            new_state.day_in_cycle = 1;
-        }
-    }
-    new_state.history_dates.push(state_reference.now);
-    new_state.solar_history.push(solar_power(&state));
-    new_state.daylight_history.push(daylight_hours(
-        state_reference.latitude,
-        state_reference.now.ordinal0(),
-    ));
-    new_state
 }
 
 #[test]
@@ -157,7 +175,7 @@ fn test_clip() {
     assert_eq!(clip(val, lower, upper), 0.5)
 }
 
-fn clip(val: f32, lower: f32, upper: f32) -> f32 {
+fn clip<T: PartialOrd>(val: T, lower: T, upper: T) -> T {
     if val < lower {
         lower
     } else if val > upper {
@@ -179,8 +197,8 @@ fn test_step_1() {
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 0.;
     state.load = 20.;
-    let net = step(&state);
-    assert_eq!(net.current_stored_energy, 10.)
+    state.step();
+    assert_eq!(state.current_stored_energy, 10.)
 }
 
 #[test]
@@ -190,24 +208,8 @@ fn test_step_2() {
     state.current_stored_energy = 50.;
     state.solar_nominal_output = 10.;
     state.load = 20.;
-    let net = step(&state);
-    assert_eq!(net.current_stored_energy, 40.)
-}
-
-pub fn net_energy(s: &SimState) -> f32 {
-    let actual_solar_energy = solar_power(&s)
-        * bounded_daylight_hours(
-            s.now,
-            s.now + s.step_size,
-            daylight_hours(s.latitude, s.now.ordinal0()),
-        );
-    let load_energy = s.load * s.step_size.num_minutes() as f32 / 60.;
-    let point_load_energy = s
-        .point_loads
-        .iter()
-        .map(|(_, l)| l.energy(s.now, s.step_size))
-        .sum::<f32>();
-    actual_solar_energy - load_energy - point_load_energy
+    state.step();
+    assert_eq!(state.current_stored_energy, 40.)
 }
 
 pub fn daylight_hours(lat: f32, day: u32) -> f32 {
@@ -221,8 +223,7 @@ pub fn daylight_hours(lat: f32, day: u32) -> f32 {
     //                          \_          cos(L*pi/180)*cos(P)           _/
     let numerator = 0.8333_f32.to_radians().sin() + lat.to_radians().sin() * p.sin();
     let denom = (lat * PI / 180.).cos() * p.cos();
-    let d = (24. / PI) * (numerator / denom).acos();
-    d
+    (24. / PI) * (numerator / denom).acos()
 }
 
 #[test]
@@ -231,34 +232,15 @@ fn test_daylight_1() {
     assert!(error < 0.15)
 }
 
-pub fn bounded_daylight_duration(
-    start: NaiveDateTime,
-    end: NaiveDateTime,
-    daylight_hours: f32,
-) -> Duration {
-    let sunrise = NaiveDateTime::new(
-        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(),
-        NaiveTime::from_num_seconds_from_midnight_opt(
-            ((12. - daylight_hours / 2.) * 60. * 60.) as u32,
-            0,
-        )
-        .unwrap(),
-    );
-    let sunset = NaiveDateTime::new(
-        NaiveDate::from_ymd_opt(start.year(), start.month(), start.day()).unwrap(),
-        NaiveTime::from_num_seconds_from_midnight_opt(
-            ((12. + daylight_hours / 2.) * 60. * 60.) as u32,
-            0,
-        )
-        .unwrap(),
-    );
-    if end < sunrise || start > sunset {
+pub fn bounded_daylight_duration(start: NaiveDateTime, end: NaiveDateTime, lat: f32) -> Duration {
+    let sunrise = sunrise(start.date(), lat);
+    let sunset = sunset(start.date(), lat);
+    if end.time() < sunrise || start.time() > sunset {
         Duration::zero()
     } else {
-        earlier_of(end, sunset) - later_of(start, sunrise)
+        earlier_of(end.time(), sunset) - later_of(start.time(), sunrise)
     }
 }
-
 #[test]
 fn test_bounded_daylight_duration_1() {
     let start = NaiveDateTime::new(
@@ -270,17 +252,13 @@ fn test_bounded_daylight_duration_1() {
         NaiveTime::from_hms_opt(13, 0, 0).unwrap(),
     );
     assert_eq!(
-        bounded_daylight_duration(start, end, 12.),
+        bounded_daylight_duration(start, end, 0.),
         Duration::hours(1)
     )
 }
 
-pub fn bounded_daylight_hours(
-    start: NaiveDateTime,
-    end: NaiveDateTime,
-    daylight_hours: f32,
-) -> f32 {
-    let dur = bounded_daylight_duration(start, end, daylight_hours);
+pub fn bounded_daylight_hours(start: NaiveDateTime, end: NaiveDateTime) -> f32 {
+    let dur = bounded_daylight_duration(start, end, 0.);
     dur.num_seconds() as f32 / (60. * 60.)
 }
 
@@ -294,7 +272,7 @@ fn test_bounded_daylight_hours_1() {
         NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
         NaiveTime::from_hms_opt(13, 0, 0).unwrap(),
     );
-    assert_eq!(bounded_daylight_hours(start, end, 12.), 1.)
+    assert_eq!(bounded_daylight_hours(start, end), 1.)
 }
 
 #[test]
@@ -304,7 +282,7 @@ fn test_bounded_daylight_hours_2() {
         NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
     );
     let dur = Duration::hours(1);
-    assert_eq!(bounded_daylight_hours(start, start + dur, 12.), 1.)
+    assert_eq!(bounded_daylight_hours(start, start + dur), 1.)
 }
 
 #[test]
@@ -317,10 +295,10 @@ fn test_bounded_daylight_hours_3() {
         NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
         NaiveTime::from_hms_opt(6, 15, 0).unwrap(),
     );
-    assert_eq!(bounded_daylight_hours(start, end, 12.), 0.25)
+    assert_eq!(bounded_daylight_hours(start, end), 0.25)
 }
 
-pub fn later_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
+pub fn later_of<T: PartialOrd>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
@@ -340,7 +318,7 @@ fn test_time_comparison() {
     assert_eq!(earlier_of(nine_am, noon), nine_am);
 }
 
-pub fn earlier_of(a: NaiveDateTime, b: NaiveDateTime) -> NaiveDateTime {
+pub fn earlier_of<T: PartialOrd>(a: T, b: T) -> T {
     if a < b { a } else { b }
 }
 
@@ -365,20 +343,6 @@ pub fn sunset(date: NaiveDate, lat: f32) -> NaiveTime {
     )
     .unwrap()
 }
-pub fn solar_power(s: &SimState) -> f32 {
-    let start = s.now;
-    let end = s.now + s.step_size;
-
-    let start_coeff = solar_production_curve(start, s.latitude);
-    let end_coeff = solar_production_curve(end, s.latitude);
-    let avg_coeff = (start_coeff + end_coeff) / 2.;
-    let mut actual_solar_energy = s.solar_nominal_output * avg_coeff;
-
-    if s.day_in_cycle <= s.reduced_power_days {
-        actual_solar_energy = actual_solar_energy * s.reduced_power_percent
-    }
-    actual_solar_energy
-}
 
 #[test]
 fn test_solar_power_2() {
@@ -389,10 +353,10 @@ fn test_solar_power_2() {
     );
     state.step_size = Duration::seconds(1);
     state.solar_nominal_output = 1.;
-    let net = solar_power(&state);
+    let net = state.solar_power();
     assert!((net - 0.33).abs() < 0.01)
 }
-
+#[must_use]
 pub fn time_hours(time: NaiveTime) -> f32 {
     time.hour() as f32 + (time.minute() as f32) / 60. + (time.second() as f32) / (60. * 60.)
 }
@@ -401,21 +365,20 @@ fn test_time_hours() {
     let time = NaiveTime::from_hms_opt(1, 30, 0).unwrap();
     assert_eq!(time_hours(time), 1.5)
 }
-
+#[must_use]
 pub fn solar_production_curve(now: NaiveDateTime, lat: f32) -> f32 {
     let light_hours = daylight_hours(lat, now.ordinal0());
     let rise = sunrise(now.date(), lat);
     let set = sunset(now.date(), lat);
     let hour = time_hours(now.time());
 
-    let coeff = if now.time() <= rise || now.time() >= set {
+    if now.time() <= rise || now.time() >= set {
         0.
     } else {
         let time_scaler = (2. * PI) / light_hours;
         let cos_part = (time_scaler * (hour - 12.)).cos();
         0.5 * cos_part + 0.5
-    };
-    coeff
+    }
 }
 
 #[test]
@@ -443,179 +406,6 @@ fn test_solar_production_2() {
     assert_eq!(solar_production_curve(six, 12.), 0.);
 }
 
-pub fn chart(
-    xs: Vec<NaiveDateTime>,
-    ys: Vec<Vec<f32>>,
-    ys_secondary: Vec<Vec<f32>>,
-    labels: Vec<String>,
-    title: Option<String>,
-    show_legend: bool,
-) {
-    let output_file = "Energy Plot.png";
-
-    let root = BitMapBackend::new(output_file, (1024, 768)).into_drawing_area();
-    let mut builder = ChartBuilder::on(&root);
-    //use plotters::{prelude::*, style::Color};
-    root.fill(&WHITE).unwrap();
-
-    //const PLOT_LINE_COLOR: RGBColor = RGBColor(0, 175, 255);
-
-    let from_date = *xs.first().clone().expect("No dates to display");
-    let to_date = *xs.last().expect("No dates to display");
-
-    let y_max: f32 = ys
-        .iter()
-        .map(|y| y.clone().into_iter().reduce(f32::max))
-        .filter(|i| i.is_some())
-        .map(|i| i.unwrap())
-        .reduce(f32::max)
-        .unwrap();
-
-    let y_secondary_max: f32 = ys_secondary
-        .iter()
-        .map(|y| y.clone().into_iter().reduce(f32::max))
-        .filter(|i| i.is_some())
-        .map(|i| i.unwrap())
-        .reduce(f32::max)
-        .unwrap();
-
-    let mut chart = if title.is_some() {
-        builder
-            .x_label_area_size(28_i32)
-            .y_label_area_size(28_i32)
-            .right_y_label_area_size(40)
-            .margin(20_i32)
-            .caption(title.clone().unwrap().as_str(), ("sans-serif", 30.0))
-            .build_cartesian_2d(
-                RangedDateTime::from(from_date..to_date),
-                0_f32..y_max * 1.05,
-            )
-            .unwrap()
-            .set_secondary_coord(
-                RangedDateTime::from(from_date..to_date),
-                0_f32..y_secondary_max * 1.05,
-            )
-    } else {
-        builder
-            .x_label_area_size(28_i32)
-            .y_label_area_size(28_i32)
-            .right_y_label_area_size(40)
-            .margin(20_i32)
-            .build_cartesian_2d(
-                RangedDateTime::from(from_date..to_date),
-                0_f32..y_max * 1.05,
-            )
-            .unwrap()
-            .set_secondary_coord(
-                RangedDateTime::from(from_date..to_date),
-                0_f32..y_secondary_max * 1.05,
-            )
-        // .expect("Failed to build chart")
-    };
-
-    chart
-        .configure_mesh()
-        //.bold_line_style(plotters::style::colors::BLUE.mix(0.1))
-        //.light_line_style(plotters::style::colors::BLUE.mix(0.05))
-        //.axis_style(ShapeStyle::from(plotters::style::colors::BLUE.mix(0.45)).stroke_width(1))
-        //.y_labels(10)
-        .x_labels(6)
-        .x_label_formatter(&|x| format!("{}-{}-{}", x.day(), x.month(), x.year()))
-        //.y_label_style(
-        //    ("sans-serif", 15)
-        //        .into_font()
-        //        .color(&plotters::style::colors::BLUE.mix(0.65))
-        //        .transform(FontTransform::Rotate90),
-        //)
-        .y_label_formatter(&|y| format!("{}", y))
-        .y_desc("Battery Charge")
-        .draw()
-        .expect("failed to draw chart mesh");
-
-    chart
-        .configure_secondary_axes()
-        .y_desc("Daylight Hours")
-        .draw()
-        .unwrap();
-
-    let colors = vec![
-        &BLUE,
-        &RED,
-        &BLACK,
-        &RGBColor(0, 128, 0),     // green
-        &RGBColor(255, 146, 0),   // Orange/brown
-        &RGBColor(0, 153, 230),   // light blue
-        &RGBColor(180, 0, 180),   // Purple
-        &RGBColor(255, 150, 150), // pink
-    ];
-    let mut color_index = 0;
-    let n = vec![ys.len(), colors.len(), labels.len()]
-        .iter()
-        .min()
-        .unwrap_or(&1)
-        .clone() as usize;
-
-    for i in 0..n {
-        let this_data: Vec<(NaiveDateTime, f32)> = xs
-            .clone()
-            .into_iter()
-            .zip(ys[i.clone()].clone().into_iter())
-            .collect();
-        let this_color = colors[color_index];
-        let this_label = labels[i].clone();
-        chart
-            .draw_series(
-                LineSeries::new(
-                    this_data.iter().cloned(),
-                    this_color,
-                    //PLOT_LINE_COLOR.mix(0.175),
-                ), //.border_style(ShapeStyle::from(**color).stroke_width(2)),
-            )
-            .expect("failed to draw chart data")
-            .label(this_label)
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], this_color.clone()));
-        color_index += 1;
-    }
-
-    let n = vec![ys_secondary.len(), colors.len(), labels.len()]
-        .iter()
-        .min()
-        .unwrap_or(&1)
-        .clone() as usize;
-
-    for i in 0..n {
-        let this_data: Vec<(NaiveDateTime, f32)> = xs
-            .clone()
-            .into_iter()
-            .zip(ys_secondary[i.clone()].clone().into_iter())
-            .collect();
-        let this_color = colors[color_index];
-        let this_label = labels[color_index].clone();
-        chart
-            .draw_secondary_series(
-                LineSeries::new(
-                    this_data.iter().cloned(),
-                    this_color,
-                    //PLOT_LINE_COLOR.mix(0.175),
-                ), //.border_style(ShapeStyle::from(**color).stroke_width(2)),
-            )
-            .expect("failed to draw chart data")
-            .label(this_label)
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], this_color.clone()));
-        color_index += 1;
-    }
-
-    if show_legend {
-        chart
-            .configure_series_labels()
-            .background_style(&WHITE)
-            .border_style(&BLACK)
-            .draw()
-            .expect("Failed to draw legend")
-    }
-    root.present().expect("Unable to write result to file, please make sure 'plotters-doc-data' dir exists under current dir");
-    println!("Result has been saved to {}", output_file);
-}
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadFrequency {
     Hourly,
@@ -623,14 +413,7 @@ pub enum LoadFrequency {
     Weekly,
 }
 impl LoadFrequency {
-    pub fn to_string(&self) -> String {
-        match self {
-            LoadFrequency::Hourly => "Hourly".to_owned(),
-            LoadFrequency::Daily => "Daily".to_owned(),
-            LoadFrequency::Weekly => "Weekly".to_owned(),
-        }
-    }
-
+    #[must_use]
     pub fn index(&self) -> usize {
         match self {
             LoadFrequency::Hourly => 0,
@@ -649,156 +432,6 @@ impl std::fmt::Display for LoadFrequency {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct InstantLoad {
-    pub time: NaiveTime,
-    pub energy: f32, // Wh
-    pub frequency: LoadFrequency,
-    pub id: usize,
-    pub weekday: Weekday,
-}
-
-impl InstantLoad {
-    pub fn energy(&self, now: NaiveDateTime, step: Duration) -> f32 {
-        let start = now - step;
-        match self.frequency {
-            LoadFrequency::Hourly => {
-                if start.hour() != now.hour() {
-                    self.energy
-                } else {
-                    0.0
-                }
-            }
-            LoadFrequency::Daily => {
-                if start.time() < self.time && self.time <= now.time() {
-                    self.energy
-                } else {
-                    0.0
-                }
-            }
-            LoadFrequency::Weekly => {
-                let time_day = NaiveDateTime::new(
-                    NaiveDate::from_ymd_opt(now.year(), now.month(), now.day()).unwrap(),
-                    self.time,
-                );
-                if start < time_day && time_day <= now {
-                    self.energy
-                } else {
-                    0.0
-                }
-            }
-        }
-    }
-
-    pub fn view<'a>(&self, _: usize) -> Element<'a, LoadMessage> {
-        let frequency_list = [
-            LoadFrequency::Hourly,
-            LoadFrequency::Daily,
-            LoadFrequency::Weekly,
-        ];
-        let frequency_selector = pick_list(
-            frequency_list,
-            Some(self.frequency.clone()),
-            LoadMessage::FrequencyChanged,
-        )
-        .width(Length::Fixed(90.));
-        let day_list = [
-            Weekday::Monday,
-            Weekday::Tuesday,
-            Weekday::Wednesday,
-            Weekday::Thursday,
-            Weekday::Friday,
-            Weekday::Saturday,
-            Weekday::Sunday,
-        ];
-        let day_selector = pick_list(
-            day_list,
-            Some(self.weekday.clone()),
-            LoadMessage::WeekdayChanged,
-        )
-        .width(Length::Fixed(90.));
-        match self.frequency {
-            LoadFrequency::Daily => row![
-                column![
-                    rule::horizontal(1),
-                    row![
-                        frequency_selector,
-                        text("load at ").width(Length::FillPortion(1)),
-                        NumberInput::new(&self.time.hour(), 0..24, LoadMessage::TimeChanged)
-                            .width(Length::Fixed(50.)),
-                        text("oclock of ").width(Length::FillPortion(1)),
-                    ]
-                    .spacing(5.),
-                    row![
-                        NumberInput::new(&self.energy, 0. ..1000000., LoadMessage::LoadChanged)
-                            .width(Length::Fixed(100.)),
-                        text("Wh").width(Length::Fill),
-                        Button::new("X")
-                            .on_press(LoadMessage::Delete)
-                            .width(Length::Shrink),
-                    ]
-                    .spacing(5.)
-                ]
-                .spacing(10.)
-            ],
-
-            LoadFrequency::Weekly => row![
-                column![
-                    rule::horizontal(1),
-                    row![
-                        frequency_selector,
-                        text("load at ").width(Length::FillPortion(1)),
-                        NumberInput::new(&self.time.hour(), 0..24, LoadMessage::TimeChanged)
-                            .width(Length::Fixed(50.)),
-                        text("oclock on").width(Length::FillPortion(1))
-                    ]
-                    .spacing(5.),
-                    row![
-                        day_selector,
-                        text("of ").width(Length::Shrink),
-                        NumberInput::new(&self.energy, 0. ..1000000., LoadMessage::LoadChanged)
-                            .width(Length::Fixed(100.)),
-                        text("Wh").width(Length::Fill),
-                        Button::new("X")
-                            .on_press(LoadMessage::Delete)
-                            .width(Length::Shrink),
-                    ]
-                    .spacing(5),
-                ]
-                .spacing(10.)
-            ],
-
-            LoadFrequency::Hourly => row![
-                column![
-                    rule::horizontal(1),
-                    row![
-                        frequency_selector,
-                        text("load of").width(Length::Shrink),
-                        NumberInput::new(&self.energy, 0. ..1000000., LoadMessage::LoadChanged)
-                            .width(Length::Fixed(100.)),
-                        text("Wh").width(Length::Fill),
-                        Button::new("X")
-                            .on_press(LoadMessage::Delete)
-                            .width(Length::Shrink),
-                    ]
-                    .spacing(5.),
-                ]
-                .spacing(10.)
-            ],
-        }
-        .into()
-    }
-    pub fn update(&mut self, message: LoadMessage) {
-        match message {
-            LoadMessage::FrequencyChanged(f) => self.frequency = f,
-            LoadMessage::LoadChanged(e) => self.energy = e,
-            LoadMessage::TimeChanged(t) => self.time = NaiveTime::from_hms_opt(t, 0, 0).unwrap(),
-            LoadMessage::Delete => (),
-            LoadMessage::WeekdayChanged(d) => self.weekday = d,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Weekday {
     Monday,
@@ -810,18 +443,7 @@ pub enum Weekday {
     Sunday,
 }
 impl Weekday {
-    pub fn to_string(&self) -> String {
-        match self {
-            Weekday::Monday => "Monday".to_owned(),
-            Weekday::Tuesday => "Tuesday".to_owned(),
-            Weekday::Wednesday => "Wednesday".to_owned(),
-            Weekday::Thursday => "Thursday".to_owned(),
-            Weekday::Friday => "Friday".to_owned(),
-            Weekday::Saturday => "Saturday".to_owned(),
-            Weekday::Sunday => "Sunday".to_owned(),
-        }
-    }
-
+    #[must_use]
     pub fn index(&self) -> usize {
         match self {
             Weekday::Monday => 0,

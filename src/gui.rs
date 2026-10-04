@@ -9,7 +9,7 @@ use plotters::coord::types::RangedDateTime;
 use plotters::prelude::*;
 use plotters_iced2::{Chart, ChartBuilder, ChartWidget, DrawingBackend};
 
-use crate::{InstantLoad, LoadFrequency, SimState, Weekday, run_simulation};
+use crate::{InstantLoad, LoadFrequency, SimState, Weekday};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,8 +49,8 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let starting_state = SimState::new();
-        let state = run_simulation(&starting_state);
+        let mut state = SimState::new();
+        state.run_simulation();
         let frequency_labels = vec![
             "Hourly".to_string(),
             "Daily".to_string(),
@@ -117,7 +117,7 @@ impl AppState {
                 self.next_load_id += 1;
             }
         }
-        self.sim_state = run_simulation(&self.sim_state);
+        self.sim_state.clone().run_simulation();
         let mut labels = vec!["State of Charge".to_string()];
         let mut secondary_data = Vec::new();
         match self.second_axis {
@@ -417,7 +417,7 @@ impl Chart<ChartMessage> for DateLineChart {
                 .unwrap();
         }
 
-        let colors = vec![
+        let colors = [
             &BLUE,
             &RED,
             &BLACK,
@@ -428,7 +428,7 @@ impl Chart<ChartMessage> for DateLineChart {
             &RGBColor(255, 150, 150), // pink
         ];
         let mut color_index = 0;
-        let n = vec![self.ys.len(), colors.len(), self.labels.len()]
+        let n = [self.ys.len(), colors.len(), self.labels.len()]
             .iter()
             .min()
             .unwrap_or(&1)
@@ -457,7 +457,7 @@ impl Chart<ChartMessage> for DateLineChart {
             color_index += 1;
         }
 
-        let n = vec![self.ys_secondary.len(), colors.len(), self.labels.len()]
+        let n = [self.ys_secondary.len(), colors.len(), self.labels.len()]
             .iter()
             .min()
             .unwrap_or(&1)

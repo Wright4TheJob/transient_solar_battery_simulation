@@ -132,12 +132,7 @@ impl AppState {
             }
         }
         self.plot = DateLineChart::new(
-            self.sim_state
-                .history_dates
-                .clone()
-                .into_iter()
-                .map(|d| d)
-                .collect(),
+            self.sim_state.history_dates.clone(),
             vec![self.sim_state.charge_history.clone()],
             secondary_data,
             labels,

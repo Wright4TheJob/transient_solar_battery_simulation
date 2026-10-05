@@ -67,7 +67,7 @@ impl SimState {
             })
             .unwrap()
             .and_hms_opt(0, 0, 0)
-            .unwrap();
+            .unwrap_or_default();
 
         self.current_stored_energy = self.initial_charge * self.battery_capacity / 100.;
         self.charge_history = Vec::new();
@@ -76,14 +76,14 @@ impl SimState {
         self.daylight_history = Vec::new();
 
         let end = NaiveDate::from_ymd_opt(2023, 12, 31)
-            .unwrap()
+            .unwrap_or_default()
             .with_ordinal(match self.end_day {
                 0 => 1,
                 _ => self.end_day,
             })
             .unwrap()
             .and_hms_opt(0, 0, 0)
-            .unwrap();
+            .unwrap_or_default();
 
         while self.now < end {
             self.step();
@@ -108,18 +108,22 @@ impl SimState {
         self.daylight_history
             .push(daylight_hours(self.latitude, self.now.ordinal0()));
     }
+    #[must_use]
     pub fn actual_solar_energy(&self) -> f32 {
         self.solar_power() * bounded_daylight_hours(self.now, self.now + self.step_size)
     }
+    #[must_use]
     pub fn steady_load_energy(&self) -> f32 {
         self.load * self.step_size.num_minutes() as f32 / 60.
     }
+    #[must_use]
     pub fn point_load_energy(&self) -> f32 {
         self.point_loads
             .values()
             .map(|l| l.energy(self.now, self.step_size))
             .sum::<f32>()
     }
+    #[must_use]
     pub fn net_energy(&self) -> f32 {
         self.actual_solar_energy() - self.steady_load_energy() - self.point_load_energy()
     }
@@ -211,11 +215,11 @@ fn test_step_2() {
     state.step();
     assert_eq!(state.current_stored_energy, 40.)
 }
-
+#[must_use]
 pub fn daylight_hours(lat: f32, day: u32) -> f32 {
-    let p = (0.39795
-        * (0.2163108 + 2. * (0.9671396 * (0.00860 * (day as f32)).tan()).atan()).cos())
-    .asin();
+    let day_f = f32::from_bits(day);
+    let p =
+        (0.39795 * (0.2163108 + 2. * (0.9671396 * (0.00860 * day_f).tan()).atan()).cos()).asin();
 
     //                           _                                         _
     //                          / sin(0.8333*pi/180) + sin(L*pi/180)*sin(P) \
@@ -231,7 +235,7 @@ fn test_daylight_1() {
     let error = (daylight_hours(0., 85) - 12.).abs();
     assert!(error < 0.15)
 }
-
+#[must_use]
 pub fn bounded_daylight_duration(start: NaiveDateTime, end: NaiveDateTime, lat: f32) -> Duration {
     let sunrise = sunrise(start.date(), lat);
     let sunset = sunset(start.date(), lat);
@@ -256,7 +260,7 @@ fn test_bounded_daylight_duration_1() {
         Duration::hours(1)
     )
 }
-
+#[must_use]
 pub fn bounded_daylight_hours(start: NaiveDateTime, end: NaiveDateTime) -> f32 {
     let dur = bounded_daylight_duration(start, end, 0.);
     dur.num_seconds() as f32 / (60. * 60.)
@@ -321,27 +325,28 @@ fn test_time_comparison() {
 pub fn earlier_of<T: PartialOrd>(a: T, b: T) -> T {
     if a < b { a } else { b }
 }
-
+#[must_use]
 pub fn sunrise(date: NaiveDate, lat: f32) -> NaiveTime {
     let light_hours = daylight_hours(lat, date.ordinal0());
     NaiveTime::from_num_seconds_from_midnight_opt(
         43200 - ((light_hours / 2.) * 60. * 60.) as u32,
         0,
     )
-    .unwrap()
+    .unwrap_or(NaiveTime::from_hms_opt(6, 0, 0).unwrap_or_default())
 }
 #[test]
 fn test_sunrise_1() {
     let date = NaiveDate::from_ymd_opt(2023, 3, 15).unwrap();
     assert_eq!(sunrise(date, 45.).hour(), 6)
 }
+#[must_use]
 pub fn sunset(date: NaiveDate, lat: f32) -> NaiveTime {
     let light_hours = daylight_hours(lat, date.ordinal0());
     NaiveTime::from_num_seconds_from_midnight_opt(
         43200 + ((light_hours / 2.) * 60. * 60.) as u32,
         0,
     )
-    .unwrap()
+    .unwrap_or(NaiveTime::from_hms_opt(18, 0, 0).unwrap_or_default())
 }
 
 #[test]
